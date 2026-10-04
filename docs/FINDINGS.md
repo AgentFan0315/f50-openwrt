@@ -1665,7 +1665,10 @@ on the card, the earlier installation still in the internal region.
   cable was found to need replugging later the same night). Which of the two is open.
 - **Uninstall.** Internal kept, card erased: `erased (/dev/block/mmcblk1p1)`, the internal `root-on-sd` marker
   removed, the internal systems intact; `install.sh --check` then reported `existing mu300sd filesystem: no`.
-- **Without the card.** Not measured yet (the fallback to the internal system after the 8 s wait, `stage=sd-root-missing`).
+- **Without the card.** Pending: card-pull fallback. Not measured on the device yet (it needs the card pulled by
+  hand): neither the fallback to the internal system after the wait (`stage=sd-root-missing`) nor the way to Android
+  without an internal system. What exists is the design and the unit tests of the root selection
+  (`tests/test_boot_init.py`, RootSelect).
 - **Kernel 5.4.** Release v2026.10.08's 5.4 bundle with this branch's init in its generic ramdisk and `sdcard` in
   `./features`, installed on the card system with `mu300-update kernel 5.4` (2026-10-05): 7 boots, 2 with the init
   from before the longer wait and 5 with the one that has it, all from the card (`/run/mu300-root-dev`
