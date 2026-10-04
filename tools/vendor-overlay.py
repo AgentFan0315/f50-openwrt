@@ -132,7 +132,7 @@ def add_members(tar, src: Path, dest: str, seen: set, rename=None):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--os', required=True, choices=['ubuntu', 'openwrt'])
+    ap.add_argument('--os', required=True, choices=['ubuntu', 'openwrt', 'openwrt-luci'])
     ap.add_argument('--firmware', type=Path)
     ap.add_argument('--android-subset', type=Path, required=True)
     ap.add_argument('--gpu-subset', type=Path)
