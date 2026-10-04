@@ -32,6 +32,29 @@ Inside, the layout is exactly that of `mu300root`: `/ubuntu`, `/openwrt`, `/.mu3
 A label of its own, not `mu300root`: a device can hold both, and two filesystems with one label make
 `LABEL=` mounts pick either.
 
+## Kernel: the SD host under mainline (first step, on its own)
+
+Read from the F50 test board on 2026-10-04 (OpenWrt, 6.18.54): only `mmc0` exists. `upstream/port/install.py`
+makes `sdhci-sprd` probe nothing but the non-removable eMMC, because the SD host "is not populated on the MU300
+and floods the log". The board does have the slot and a card in it, so that edit is what keeps the card away.
+
+The fork removes the edit and, because the card-detect GPIO of the stock device tree stays deferred under
+mainline (its EIC supplier has no driver there), lets the `sdio_sd` host fall back to polling
+(`MMC_CAP_NEEDS_POLL`) instead of deferring forever. That is taken, with two things checked on the board before
+anything else is built on it:
+
+* with a card: `mmcblk1` appears, in time for init's scan, and reads and writes hold up (a full write and read
+  back of a few hundred MiB, no CRC errors in the log);
+* without a card: the log stays quiet. The flood is why the edit exists; if polling brings it back, the host's
+  messages are rate-limited or the poll is made silent, and that is part of this step.
+
+Both 6.18 and 7.2 get it (one source). The 5.4 vendor kernel is checked the same way and is expected to have the
+host already; if it does not, a card installation is offered only together with a mainline kernel and the
+installer says so.
+
+A card installation therefore needs a boot image from a release that has this change. `mu300-update` refuses to
+install an older kernel bundle onto a device that booted from the card.
+
 ## Boot (`boot/init`)
 
 After the modules are loaded and before the internal region is looked for:
