@@ -1563,7 +1563,7 @@ The stock device tree of the F50 (read from `/proc/device-tree/soc/ap-ahb` under
 | node | `sprd,name` | bus-width | properties |
 |---|---|---|---|
 | `sdio@22200000` | `sdio_emmc` | 8 | `non-removable`, `no-sd`, `no-sdio`, HS200/HS400/HS400ES |
-| `sdio@22210000` | `sdio_sd` | 4 | `cd-gpios = <0x170 35 0>`, `no-mmc`, `no-sdio`, `sd-uhs-sdr50`, `sd-uhs-sdr104`, `vqmmc-supply` |
+| `sdio@22210000` | `sdio_sd` | 4 | `cd-gpios = <0x170 35 0>`, `no-mmc`, `no-sdio`, `sd-uhs-sdr50`, `sd-uhs-sdr104`, `vmmc-supply`, `vqmmc-supply`, `sd-detect-pol-syscon`, `sd-hotplug-{debounce-cn,debounce-en,protect-en,rmldo-en}-syscon` |
 | `sdio@22220000` | `sdio_wifi` | 4 | `no-sd`, `no-mmc`, SDR50/SDR104 |
 
 The mainline port used to let only the `non-removable` host probe, so the F50 showed `mmc0` alone with a card in
@@ -1571,12 +1571,16 @@ the slot. The gate now lets the eMMC and the `sdio_sd` host through; `sdio_wifi`
 
 Phandle 0x170 is `gpio@2000c0`, `sprd,qogirn6pro-eic-sync`. Mainline's `sprd-eic` binds it, but as a chip of 24
 lines (`gpiochip3: 24 GPIOs`), and the slot's card detect is line 35: the lookup fails, `mmc_of_parse()` returns
-`-EPROBE_DEFER` at about 2.09 s, and the host would stay deferred. For that host alone the port then sets
-`MMC_CAP_NEEDS_POLL` and logs "MU300: CD GPIO deferred, polling the card slot". (A first build tested
-`cd-gpios` with `of_property_read_bool`, which logs "Read of boolean property 'cd-gpios' with a value";
-`of_property_present` does not.)
+`-EPROBE_DEFER` at about 2.09 s, and the host would stay deferred. `mmc_of_parse()` requests the CD GPIO before it
+reads the write protect GPIO, the bus mode properties (`sd-uhs-sdr104`, `no-sdio`, `no-mmc`, ...) and the power
+sequence, so it returns before any of those. For that host alone the port therefore removes `cd-gpios` from the
+node (`of_remove_property`), runs the parse again (now without a CD GPIO: -ENOENT, which it accepts) and sets
+`MMC_CAP_NEEDS_POLL`; it logs "MU300: CD GPIO deferred, polling the card slot". `sdhci-sprd` has
+`SDHCI_QUIRK_BROKEN_CARD_DETECTION`, so without a CD GPIO every poll that finds no card tries to start one.
 
-Measured on the F50 with a 32 GB SDHC card (SL32G, manfid 0x000003), kernels built 2026-10-04:
+The first version of this edit only masked the `-EPROBE_DEFER` and kept the half-done parse; the measurements of
+that build (the card ran at 50 MHz "high speed", every poll tried SDIO, SD and MMC) are these, on the F50 with a
+32 GB SDHC card (SL32G, manfid 0x000003), kernels built 2026-10-04:
 
 - 6.18.55: `mmc0 mmc1`; `mmcblk1` type `SD`, 62333952 sectors (29.7 GiB); "new high speed SDHC card" at 2.61 s;
   50 MHz, 4 bits, timing "sd high-speed", 3.30 V. 64 MiB of random data written at offset 8 MiB with
@@ -1592,7 +1596,16 @@ Measured on the F50 with a 32 GB SDHC card (SL32G, manfid 0x000003), kernels bui
   ("Got CD GPIO"), and the card runs as "ultra high speed SDR104" after tuning, at 23.75 s (the vendor modules
   load late).
 
-The log without a card was not measured yet.
+- That build, card pulled at 392 s of uptime: "mmc1: card aaaa removed", `/dev/mmcblk1*` gone, and the log stayed
+  at 5 `mmc1` lines from 419 s to 603 s.
+
+With the complete parse (6.18.55 #4 and 7.2.9 #4), booted without a card: `mmc0 mmc1`, no `/dev/mmcblk1`,
+`cd-gpios` gone from `/proc/device-tree/.../sdio@22210000`. Both kernels logged five "mmc1: Got command interrupt
+0x00000001 (or 0x00020000) even though no command operation was in progress" with an SDHCI register dump each
+(Cmd 0x371a = CMD55, 0x081a = CMD8; Resp[0] 0xffffffff), all between 5 s and 28 s of uptime: 91 `mmc1` lines.
+The count then stayed at 91 at 68, 130, 192 and 253 s (6.18) and 69, 131, 192 and 254 s (7.2). The empty slot's
+poll costs about 19 `mmc1` interrupts a second (6.18: 3516 in 184 s; 7.2: 3513 in 184 s); `top` showed 100 % and
+96 % idle.
 
 ## Updating on the device
 
