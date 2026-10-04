@@ -1569,6 +1569,11 @@ The stock device tree of the F50 (read from `/proc/device-tree/soc/ap-ahb` under
 The mainline port used to let only the `non-removable` host probe, so the F50 showed `mmc0` alone with a card in
 the slot. The gate now lets the eMMC and the `sdio_sd` host through; `sdio_wifi` stays unprobed (Wi-Fi is on PCIe).
 
+`/proc/device-tree/aliases` (read under 6.18.55) has no `mmc` entries at all, only cooling devices, `eth*`, `i2c*`,
+`serial*`, `spi*`, `v4-modem*` and a few others. The host numbers therefore come from the probe order, not from an
+alias: `mmc0` is `22200000.sdio` (the eMMC) and `mmc1` is `22210000.sdio` (the slot), under 6.18 and 5.4 alike.
+That the eMMC is `mmcblk0` is what init and the installers rely on when they look at `mmcblk[1-9]` for the card.
+
 Phandle 0x170 is `gpio@2000c0`, `sprd,qogirn6pro-eic-sync`. Mainline's `sprd-eic` binds it, but as a chip of 24
 lines (`gpiochip3: 24 GPIOs`), and the slot's card detect is line 35: the lookup fails, `mmc_of_parse()` returns
 `-EPROBE_DEFER` at about 2.09 s, and the host would stay deferred. `mmc_of_parse()` requests the CD GPIO before it
