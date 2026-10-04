@@ -1,6 +1,7 @@
 #!/system/bin/sh
 # Attach the mu300root ext4 (free eMMC region) on Android via a bounded loop device and mount it.
 # usage: android-mount-mu300root.sh <mountpoint>   |   android-mount-mu300root.sh -u <mountpoint>
+#        MU300_SD_DEV=/dev/block/mmcblk1p1 android-mount-mu300root.sh <mountpoint>   (the mu300sd ext4 on the SD card)
 set -e
 # region of the free eMMC space after the last GPT partition (install.sh passes the values it computed)
 OFF=${MU300_OFF:-27762098176}
@@ -11,7 +12,20 @@ SIZE=${MU300_SIZE:-}
 
 if [ "$1" = -u ]; then
     L=$(grep " $2 " /proc/mounts | cut -d' ' -f1)
-    umount "$2"; [ -n "$L" ] && losetup -d "$L"; echo UNMOUNTED; exit 0
+    # only a loop is ours to detach: the SD card is a block device of its own
+    umount "$2"; case "$L" in */loop*) losetup -d "$L" ;; esac; echo UNMOUNTED; exit 0
+fi
+# the SD card: a block device of its own, no loop. Same checks as for the region, for the card's label.
+if [ -n "${MU300_SD_DEV:-}" ]; then
+    grep -q "^$MU300_SD_DEV " /proc/mounts && { echo "ALREADY-MOUNTED $MU300_SD_DEV"; exit 1; }
+    magic=$(dd if="$MU300_SD_DEV" bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    [ "$magic" = 53ef ] || { echo "NO-EXT4 magic=$magic"; exit 1; }
+    label=$(dd if="$MU300_SD_DEV" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\000')
+    [ "$label" = mu300sd ] || { echo "NOT-MU300SD label=$label"; exit 1; }
+    mkdir -p "$1"
+    mount -t ext4 -o noatime "$MU300_SD_DEV" "$1"
+    echo "MOUNTED $MU300_SD_DEV on $1"
+    exit 0
 fi
 MP=$1
 # never attach the same ext4 twice (two loops mounting one filesystem corrupts it); a leftover loop from an
