@@ -1556,6 +1556,44 @@ was never set up. It is initialised before every scan now, `remove` checks for a
 a timed-out scan is tried once more before Wi-Fi and Bluetooth are given up. Both copies of the driver: the 5.4
 tree (`kernel/patches/wcn-pcie-scan-timeout.patch`) and `upstream/modules/wcn_bsp`.
 
+### 31j. SD host under mainline
+The stock device tree of the F50 (read from `/proc/device-tree/soc/ap-ahb` under 6.18) describes three
+`sprd,sdhci-r11` hosts, all `status = "okay"`:
+
+| node | `sprd,name` | bus-width | properties |
+|---|---|---|---|
+| `sdio@22200000` | `sdio_emmc` | 8 | `non-removable`, `no-sd`, `no-sdio`, HS200/HS400/HS400ES |
+| `sdio@22210000` | `sdio_sd` | 4 | `cd-gpios = <0x170 35 0>`, `no-mmc`, `no-sdio`, `sd-uhs-sdr50`, `sd-uhs-sdr104`, `vqmmc-supply` |
+| `sdio@22220000` | `sdio_wifi` | 4 | `no-sd`, `no-mmc`, SDR50/SDR104 |
+
+The mainline port used to let only the `non-removable` host probe, so the F50 showed `mmc0` alone with a card in
+the slot. The gate now lets the eMMC and the `sdio_sd` host through; `sdio_wifi` stays unprobed (Wi-Fi is on PCIe).
+
+Phandle 0x170 is `gpio@2000c0`, `sprd,qogirn6pro-eic-sync`. Mainline's `sprd-eic` binds it, but as a chip of 24
+lines (`gpiochip3: 24 GPIOs`), and the slot's card detect is line 35: the lookup fails, `mmc_of_parse()` returns
+`-EPROBE_DEFER` at about 2.09 s, and the host would stay deferred. For that host alone the port then sets
+`MMC_CAP_NEEDS_POLL` and logs "MU300: CD GPIO deferred, polling the card slot". (A first build tested
+`cd-gpios` with `of_property_read_bool`, which logs "Read of boolean property 'cd-gpios' with a value";
+`of_property_present` does not.)
+
+Measured on the F50 with a 32 GB SDHC card (SL32G, manfid 0x000003), kernels built 2026-10-04:
+
+- 6.18.55: `mmc0 mmc1`; `mmcblk1` type `SD`, 62333952 sectors (29.7 GiB); "new high speed SDHC card" at 2.61 s;
+  50 MHz, 4 bits, timing "sd high-speed", 3.30 V. 64 MiB of random data written at offset 8 MiB with
+  `conv=fsync` in 4.0 s and read back with `iflag=direct` in 5.3 s; `cmp` equal. No `mmc1` line with crc,
+  timeout or error (the brief's `grep -ciE "crc|timeout.*mmc1"` counts 5, all of them "CPU features: CRC32" and
+  four "sprd-wlan: CRC value" lines).
+- The log with the card in: 4 `mmc1` lines, the same at 55 s, 89 s, 211 s and 313 s of uptime. The poll is silent:
+  the `mmc1` interrupt counter grew by 117 in 121 s (about one request a second), with no new log lines.
+- 7.2.9: the same 4 lines and deferral message, `mmcblk1` type `SD`, same size; 64 MiB written in 4.7 s, read in
+  4.8 s, `cmp` equal, no `mmc1` crc/timeout/error line; 64 interrupts in 67 s; `sdio_wifi` unbound.
+- 5.4 (release v2026.09.30's kernel): `mmc0 mmc1 mmc2` (the vendor driver also probes `sdio_wifi`);
+  `/dev/mmcblk1` and `/dev/mmcblk1p1`, type `SD`, 62333952 sectors. The vendor EIC driver gives the card detect
+  ("Got CD GPIO"), and the card runs as "ultra high speed SDR104" after tuning, at 23.75 s (the vendor modules
+  load late).
+
+The log without a card was not measured yet.
+
 ## Updating on the device
 
 ### 32. Old kernels, an idle IPA, and an update that ended in Android
