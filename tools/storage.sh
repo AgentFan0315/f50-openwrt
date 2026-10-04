@@ -6,6 +6,7 @@
 #                    holds mu300sd still needs the typed word: that card would boot instead)
 #   sd_kernel_ok     a card installation refuses a kernel bundle that cannot read the card
 #   sd_erase         uninstall.sh: overwrite the start of the card's mu300sd filesystem (nothing else, ever)
+#   write_install_env  install.sh: the text of mu300-install.env (install.ps1's InstallEnvText writes the same)
 
 SD_MIN=$((700 * 1024 * 1024))
 
@@ -110,4 +111,13 @@ sd_erase() {
     _o=$(su_do "$(sd_erase_cmd "$SD_DEV")")
     case $_o in *ERASED*) ;; *) die "the SD card was not erased: $_o" ;; esac
     [ "$(sd_existing)" = no ] || die "the SD card still shows a mu300sd filesystem"
+}
+
+# mu300-install.env, what android-install.sh is told. OFF/SIZE (and their sectors) are always the internal region:
+# in SD mode SIZE is the card's by now and INT_SIZE keeps the region's, which the root-on-sd marker needs; the card's
+# own size is read on the device.
+write_install_env() {
+    _rs=$SIZE; [ "$SD_MODE" = 1 ] && _rs=$INT_SIZE
+    printf 'OFF=%s\nSIZE=%s\nOFF_S=%s\nSIZE_S=%s\nFORMAT=%s\nOSES="%s"\nWIPE_LEGACY=%s\nUPDATE=%s\nBOOT_OS=%s\nDEFAULT_LINUX=%s\nBOOT_ATTEMPTS=%s\nIMPORT_HOTSPOT=%s\nKERNEL=%s\nSD_MODE=%s\nSD_DEV=%s\nINTERNAL_EXISTS=%s\nPWHASH='"'"'%s'"'"'\n' \
+      "$OFF" "$_rs" "$((OFF / 512))" "$((_rs / 512))" "$FORMAT" "$OSES" "$WIPE_LEGACY" "$UPDATE" "$BOOT_OS" "$DEFAULT_LINUX" "$BOOT_ATTEMPTS" "$IMPORT_HOTSPOT" "$KERNEL" "$SD_MODE" "$SD_DEV" "$INTERNAL_EXISTS" "$PWHASH"
 }

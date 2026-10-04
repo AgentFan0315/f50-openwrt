@@ -219,6 +219,56 @@ class Storage(ShellTest):
         self.assertLess(unpack, check)
         self.assertLess(check, src.index("say \"$(t 'Adding the vendor files from your device to the images')\""))
 
+
+class InstallEnv(ShellTest):
+    """mu300-install.env, what android-install.sh is told: tools/storage.sh's write_install_env (install.sh) and
+    install.ps1's InstallEnvText write the same text (tests/installer.Tests.ps1 compares the two)."""
+    COMMON = dict(OFF=27762098176, FORMAT=1, OSES='ubuntu openwrt', WIPE_LEGACY=0, UPDATE=0, BOOT_OS='openwrt',
+                  DEFAULT_LINUX=1, BOOT_ATTEMPTS=5, IMPORT_HOTSPOT=1, KERNEL='6.18', PWHASH='$6$salt$hash/x.y')
+
+    def write_env(self, shell, **v):
+        code = ''.join(f"{k}='{val}'; " for k, val in v.items())
+        r = self.sh(shell, code + f'. "{TOP}/tools/storage.sh"; write_install_env')
+        self.assertEqual('', r.stderr)
+        return r.stdout
+
+    @staticmethod
+    def parse(text):
+        return dict(line.split('=', 1) for line in text.splitlines())
+
+    def test_sd_mode_carries_the_card_and_the_internal_region(self):
+        # SIZE in SD mode is the card's; the file still gets the internal region (the marker goes there)
+        for shell in self.each_shell():
+            out = self.write_env(shell, **self.COMMON, SIZE=31914967040, INT_SIZE=34776023040, SD_MODE=1,
+                           SD_DEV='/dev/block/mmcblk1p1', INTERNAL_EXISTS=1)
+            e = self.parse(out)
+            self.assertEqual(e['SD_MODE'], '1')
+            self.assertEqual(e['SD_DEV'], '/dev/block/mmcblk1p1')
+            self.assertEqual(e['INTERNAL_EXISTS'], '1')
+            self.assertEqual((e['OFF'], e['SIZE']), ('27762098176', '34776023040'))
+            self.assertEqual((e['OFF_S'], e['SIZE_S']), ('54222848', '67921920'))
+            self.assertEqual((e['FORMAT'], e['UPDATE']), ('1', '0'))
+            self.assertEqual(e['OSES'], '"ubuntu openwrt"')
+            self.assertEqual(e['PWHASH'], "'$6$salt$hash/x.y'")
+            self.assertEqual(list(e), ['OFF', 'SIZE', 'OFF_S', 'SIZE_S', 'FORMAT', 'OSES', 'WIPE_LEGACY', 'UPDATE',
+                                       'BOOT_OS', 'DEFAULT_LINUX', 'BOOT_ATTEMPTS', 'IMPORT_HOTSPOT', 'KERNEL',
+                                       'SD_MODE', 'SD_DEV', 'INTERNAL_EXISTS', 'PWHASH'])
+
+    def test_internal_mode(self):
+        for shell in self.each_shell():
+            common = dict(self.COMMON, FORMAT=0, UPDATE=1)
+            out = self.write_env(shell, **common, SIZE=34776023040, INT_SIZE='', SD_MODE=0, SD_DEV='', INTERNAL_EXISTS=1)
+            e = self.parse(out)
+            self.assertEqual((e['SD_MODE'], e['SD_DEV'], e['INTERNAL_EXISTS']), ('0', '', '1'))
+            self.assertEqual((e['OFF'], e['SIZE'], e['OFF_S'], e['SIZE_S']),
+                             ('27762098176', '34776023040', '54222848', '67921920'))
+            self.assertEqual((e['FORMAT'], e['UPDATE']), ('0', '1'))
+
+    def test_installer_writes_the_env_file_with_it(self):
+        src = (TOP / 'install.sh').read_text()
+        self.assertIn('write_install_env > "$env"', src)
+        self.assertNotIn("printf 'OFF=", src)
+
 class SdErase(ShellTest):
     """tools/storage.sh's sd_erase (uninstall.sh): the card is erased only when it holds mu300sd, never the eMMC.
 

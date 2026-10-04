@@ -459,6 +459,19 @@ function SdKernelOk([int]$SdMode, [string]$Dir) {
     $f = Join-Path $Dir 'features'
     return [bool]((Test-Path $f) -and (@(Get-Content $f) -contains 'sdcard'))
 }
+# mu300-install.env, what android-install.sh is told (tools/storage.sh's write_install_env writes the same text).
+# OFF/SIZE and their sectors are always the internal region: in SD mode SIZE is the card's by now and INT_SIZE keeps
+# the region's, which the root-on-sd marker needs; the card's own size is read on the device.
+function InstallEnvText($v) {
+    [int64]$rs = if ([int]$v.SD_MODE -eq 1) { $v.INT_SIZE } else { $v.SIZE }
+    [int64]$off = $v.OFF
+    $lines = @("OFF=$off", "SIZE=$rs", "OFF_S=$([math]::Floor($off / 512))", "SIZE_S=$([math]::Floor($rs / 512))",
+        "FORMAT=$($v.FORMAT)", "OSES=`"$(@($v.OSES) -join ' ')`"", "WIPE_LEGACY=$($v.WIPE_LEGACY)", "UPDATE=$($v.UPDATE)",
+        "BOOT_OS=$($v.BOOT_OS)", "DEFAULT_LINUX=$($v.DEFAULT_LINUX)", "BOOT_ATTEMPTS=$($v.BOOT_ATTEMPTS)",
+        "IMPORT_HOTSPOT=$($v.IMPORT_HOTSPOT)", "KERNEL=$($v.KERNEL)", "SD_MODE=$($v.SD_MODE)", "SD_DEV=$($v.SD_DEV)",
+        "INTERNAL_EXISTS=$($v.INTERNAL_EXISTS)", "PWHASH='$($v.PWHASH)'")
+    return (($lines -join "`n") + "`n")
+}
 function SdExisting {
     $m = (SuDo "dd if=$SD_DEV bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1") -replace '\s', ''
     $l = (SuDo "dd if=$SD_DEV bs=1 skip=1144 count=16 2>/dev/null") -replace '\0', ''
@@ -821,12 +834,10 @@ foreach ($os in $OSES) {
     & adb push "$Work\mu300-vendor-$os.tar.gz" "$T/mu300-vendor-$os.tar.gz" | Out-Null
 }
 $envFile = "$Work\mu300-install.env"
-# SIZE is always the internal region's (the card's own size is read on the device)
-$regionSize = if ($SD_MODE -eq 1) { $INT_SIZE } else { $SIZE }
-$lines = @("OFF=$OFF", "SIZE=$regionSize", "OFF_S=$($OFF / 512)", "SIZE_S=$($regionSize / 512)", "FORMAT=$FORMAT",
-    "OSES=`"$($OSES -join ' ')`"", "WIPE_LEGACY=$WIPE_LEGACY", "UPDATE=$UPDATE", "BOOT_OS=$BOOT_OS", "DEFAULT_LINUX=$DEFAULT_LINUX", "BOOT_ATTEMPTS=$BOOT_ATTEMPTS",
-    "IMPORT_HOTSPOT=$IMPORT_HOTSPOT", "KERNEL=$KERNEL", "SD_MODE=$SD_MODE", "SD_DEV=$SD_DEV", "INTERNAL_EXISTS=$INTERNAL_EXISTS", "PWHASH='$PWHASH'")
-WriteUnix $envFile (($lines -join "`n") + "`n")
+WriteUnix $envFile (InstallEnvText @{ OFF = $OFF; SIZE = $SIZE; INT_SIZE = $INT_SIZE; FORMAT = $FORMAT; OSES = $OSES
+    WIPE_LEGACY = $WIPE_LEGACY; UPDATE = $UPDATE; BOOT_OS = $BOOT_OS; DEFAULT_LINUX = $DEFAULT_LINUX
+    BOOT_ATTEMPTS = $BOOT_ATTEMPTS; IMPORT_HOTSPOT = $IMPORT_HOTSPOT; KERNEL = $KERNEL; SD_MODE = $SD_MODE
+    SD_DEV = $SD_DEV; INTERNAL_EXISTS = $INTERNAL_EXISTS; PWHASH = $PWHASH })
 & adb push $envFile "$T/mu300-install.env" | Out-Null
 Remove-Item $envFile
 $log = SuDo "sh $T/android-install.sh"
