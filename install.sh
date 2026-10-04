@@ -253,8 +253,12 @@ echo "$(t 'eMMC: {1} ({2} sectors), partitions end at {3} (sector {4}), free aft
 sd_probe
 [ "$SD_SMALL" = 1 ] && echo "$(t 'SD card present but smaller than 700 MiB; not used')"
 if [ $CHECK_ONLY = 1 ]; then
-    SD_MODE=0
-    [ -n "$SD_DEV" ] && echo "$(t 'SD card: {1}, {2}, existing mu300sd filesystem: {3}' "$SD_DEV" "$(gib "$SD_BYTES")" "$(t "$(sd_existing)")")"
+    SD_MODE=0; sd_ex=no
+    if [ -n "$SD_DEV" ]; then
+        sd_ex=$(sd_existing)
+        echo "$(t 'SD card: {1}, {2}, existing mu300sd filesystem: {3}' "$SD_DEV" "$(gib "$SD_BYTES")" "$(t "$([ $sd_ex = yes ] && echo yes || echo no)")")"
+        [ $sd_ex = foreign ] && echo "  $(t 'the SD card holds another Linux (ext4) filesystem; the installer will not format it')"
+    fi
 else
     choose_storage
 fi
@@ -264,6 +268,12 @@ fi
 # devices: userdata is metadata-encrypted (dm-default-key), so an image file inside it cannot be read from
 # Linux, and the spare-looking blackbox and fulldumpdb partitions are written by the firmware itself.
 if [ $SD_MODE = 0 ] && [ $SIZE -lt $((700 * 1024 * 1024)) ]; then
+    # --check with a card: a real run offers the card (as the default) and needs no repartitioning
+    if [ $CHECK_ONLY = 1 ] && [ -n "$SD_DEV" ] && [ "$sd_ex" != foreign ]; then
+        echo "$(t 'result: {1}' "$(t 'too little free eMMC space for Linux; the installer will offer the SD card instead (no repartitioning needed)')")"
+        echo; echo "$(t 'Nothing was written. Android version: {1}' "$(su_do 'getprop ro.build.display.id')")"
+        exit 0
+    fi
     offer_repartition   # exits, either by installing nothing or by rebooting for a second pass
 fi
 # an existing installation defines the region (it may have been created with a slightly different size)

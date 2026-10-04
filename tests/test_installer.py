@@ -62,17 +62,20 @@ class Storage(ShellTest):
     """tools/storage.sh: internal region or SD card."""
     GIB = 1024 ** 3
 
-    def run_choose(self, shell, card, internal=30 * GIB, answer='', forced=''):
-        # card: None, or (device, sectors, has_partition, type)
+    def run_choose(self, shell, card, internal=30 * GIB, answer='', forced='', label=None, tail=''):
+        # card: None, or (device, sectors, has_partition, type); label: None (no ext4 on it) or its ext4 label
+        if label is not None:
+            (self.tmp / 'label').write_text(label)
         (self.tmp / 'sd').write_text('' if card is None else '%s %s %s\n' % (
             card[0] + ('p1' if card[2] else ''), card[1], card[3]))
         code = (f'TOP="{TOP}"; . "$TOP/tools/i18n.sh"; MU300_LANG=en; '
                 'say() { :; }; die() { echo "DIE $*"; exit 1; }; '
                 'gib() { echo "$1"; }; '
                 'ask() { printf "ASKED[%s] " "$3"; read -r _a; [ -n "$_a" ] || _a=$3; eval "$1=\\$_a"; }; '
-                f'su_do() {{ cat "{self.tmp}/sd"; }}; SIZE={internal}; '
+                f'su_do() {{ case $1 in *skip=1080*) [ -e "{self.tmp}/label" ] && echo " 53 ef" ;; '
+                f'*skip=1144*) cat "{self.tmp}/label" 2>/dev/null ;; *) cat "{self.tmp}/sd" ;; esac; }}; SIZE={internal}; '
                 f'{"MU300_STORAGE=" + forced + "; " if forced else "unset MU300_STORAGE; "}'
-                '. "$TOP/tools/storage.sh"; sd_probe; choose_storage; '
+                '. "$TOP/tools/storage.sh"; sd_probe; ' + (tail or 'choose_storage; ') +
                 'echo "mode=$SD_MODE dev=${SD_DEV:-none}"')
         return self.sh(shell, code, stdin=answer + '\n').stdout
 
@@ -125,6 +128,25 @@ class Storage(ShellTest):
         card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
         for shell in self.each_shell():
             self.assertIn('DIE', self.run_choose(shell, card, answer='usb'))
+
+    def test_sd_existing(self):
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
+        for shell in self.each_shell():
+            for label, want in ((None, 'no'), ('mu300sd', 'yes'), ('data', 'foreign'), ('', 'no')):
+                (self.tmp / 'label').unlink(missing_ok=True)
+                out = self.run_choose(shell, card, label=label, tail='echo "existing=$(sd_existing)"; SD_MODE=; ')
+                self.assertIn('existing=%s\n' % want, out)
+
+    def test_foreign_ext4_card_is_refused_before_anything_else(self):
+        # the device refuses to format it; saying so only after the download and the build costs the user an hour
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
+        for shell in self.each_shell():
+            for kw in ({'answer': 'sd'}, {'forced': 'sd'}):
+                out = self.run_choose(shell, card, label='data', **kw)
+                self.assertIn('DIE', out)
+                self.assertIn('MU300_STORAGE=internal', out)
+            self.assertIn('mode=0', self.run_choose(shell, card, label='data'))        # internal stays possible
+            self.assertIn('mode=1', self.run_choose(shell, card, label='mu300sd', answer='sd'))
 
 
 if __name__ == '__main__':

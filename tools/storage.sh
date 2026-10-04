@@ -1,7 +1,7 @@
 # Where the Linux filesystem goes: the free eMMC region or the SD card. Sourced by install.sh and uninstall.sh
 # (su_do, ask, t, die and gib are theirs).
 #   sd_probe         SD_DEV / SD_BYTES of the card in the slot (empty without one), SD_SMALL=1 when it is too small
-#   sd_existing      yes when the card already holds a mu300sd filesystem
+#   sd_existing      yes when the card already holds a mu300sd filesystem, foreign for another labelled ext4, else no
 #   choose_storage   SD_MODE=0|1; MU300_STORAGE=internal|sd answers without asking
 
 SD_MIN=$((700 * 1024 * 1024))
@@ -20,7 +20,8 @@ sd_probe() {
 sd_existing() {
     m=$(su_do "dd if=$SD_DEV bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1" | tr -d ' ')
     l=$(su_do "dd if=$SD_DEV bs=1 skip=1144 count=16 2>/dev/null" | tr -d '\000')
-    if [ "$m" = 53ef ] && [ "$l" = mu300sd ]; then echo yes; else echo no; fi
+    # an ext4 without a label counts as empty, as android-install.sh's sd_prepare treats it
+    if [ "$m" != 53ef ] || [ -z "$l" ]; then echo no; elif [ "$l" = mu300sd ]; then echo yes; else echo foreign; fi
 }
 
 choose_storage() {
@@ -28,7 +29,7 @@ choose_storage() {
     case ${MU300_STORAGE:-} in
         internal) return 0 ;;
         sd) [ -n "$SD_DEV" ] || die "$(t 'MU300_STORAGE=sd, but there is no usable SD card in the device')"
-            SD_MODE=1; return 0 ;;
+            SD_MODE=1; sd_not_foreign; return 0 ;;
         '') ;;
         *) die "$(t 'MU300_STORAGE must be internal or sd')" ;;
     esac
@@ -38,7 +39,15 @@ choose_storage() {
     ask _st "$(t 'Where should the Linux filesystem go: internal storage or the SD card ({1}, {2})? (internal/sd)' "$SD_DEV" "$(gib "$SD_BYTES")")" $_d
     case $_st in
         internal) ;;
-        sd) SD_MODE=1 ;;
+        sd) SD_MODE=1; sd_not_foreign ;;
         *) die "$(t 'invalid choice')" ;;
     esac
+}
+
+# Another Linux filesystem on the card may be someone's data, and the device refuses to format it. Say so now,
+# not after the password, the download and the build.
+sd_not_foreign() {
+    [ "$(sd_existing)" = foreign ] || return 0
+    die "$(t 'the SD card ({1}) holds another Linux (ext4) filesystem, and the installer never formats one that is not its own (mu300sd).' "$SD_DEV")
+$(t 'Copy off what you need and format the card elsewhere, use another card, or install to internal storage (MU300_STORAGE=internal).')"
 }
