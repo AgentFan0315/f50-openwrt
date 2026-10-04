@@ -20,9 +20,11 @@ sd_probe() {
 
 sd_existing() {
     m=$(su_do "dd if=$SD_DEV bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1" | tr -d ' ')
-    l=$(su_do "dd if=$SD_DEV bs=1 skip=1144 count=16 2>/dev/null" | tr -d '\000')
+    [ "$m" = 53ef ] || { echo no; return 0; }
+    # LC_ALL=C: those bytes need not be text, and macOS's tr in a UTF-8 locale complains about them
+    l=$(su_do "dd if=$SD_DEV bs=1 skip=1144 count=16 2>/dev/null" | LC_ALL=C tr -d '\000')
     # any other ext4, labelled or not, is foreign: android-install.sh's sd_prepare refuses to format it
-    if [ "$m" != 53ef ]; then echo no; elif [ "$l" = mu300sd ]; then echo yes; else echo foreign; fi
+    if [ "$l" = mu300sd ]; then echo yes; else echo foreign; fi
 }
 
 choose_storage() {

@@ -137,6 +137,19 @@ class Storage(ShellTest):
                 out = self.run_choose(shell, card, label=label, tail='echo "existing=$(sd_existing)"; SD_MODE=; ')
                 self.assertIn('existing=%s\n' % want, out)
 
+    def test_sd_existing_is_quiet_about_a_fat_card(self):
+        # a FAT card has arbitrary bytes where ext4 keeps its label; macOS's tr in a UTF-8 locale printed
+        # "tr: Illegal byte sequence" for them in the middle of the installer's report
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
+        (self.tmp / 'label').write_bytes(b'\xff\xfe\x80MSDOS\xc3\x00\x00')
+        code = (f'su_do() {{ case $1 in *skip=1080*) echo " 00 00" ;; *skip=1144*) cat "{self.tmp}/label" ;; '
+                f'*) echo /dev/block/mmcblk1p1 {card[1]} SD ;; esac; }}; t() {{ printf %s "$1"; }}; '
+                f'. "{TOP}/tools/storage.sh"; sd_probe; echo "existing=$(sd_existing)"')
+        for shell in self.each_shell():
+            r = self.sh(shell, code, LANG='en_US.UTF-8', LC_ALL='en_US.UTF-8')
+            self.assertIn('existing=no\n', r.stdout)
+            self.assertEqual('', r.stderr)
+
     def test_foreign_ext4_card_is_refused_before_anything_else(self):
         # the device refuses to format it; saying so only after the download and the build costs the user an hour
         card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
