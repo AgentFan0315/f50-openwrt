@@ -1607,6 +1607,21 @@ The count then stayed at 91 at 68, 130, 192 and 253 s (6.18) and 69, 131, 192 an
 poll costs about 19 `mmc1` interrupts a second (6.18: 3516 in 184 s; 7.2: 3513 in 184 s); `top` showed 100 % and
 96 % idle.
 
+With the card in at boot (both #4 kernels): "new UHS-I speed SDR104 SDHC card" at 2.45 s (6.18) and 2.44 s (7.2),
+`ios` 208 MHz, 4 bits, timing "sd uhs SDR104", signal 1.80 V (`vddsdio` reads 1800000 uV), 4 `mmc1` lines and none
+of the "Got command interrupt" dumps: those come from the empty slot. 64 MiB at offset 8 MiB, twice each, `cmp`
+equal, no `mmc1` crc/timeout/error/busy line: 6.18 write 3.78 s and 3.72 s (16.9 and 17.2 MiB/s), read 2.49 s and
+2.38 s (25.7 and 26.9 MiB/s); 7.2 write 3.70 s and 3.72 s (17.3 and 17.2 MiB/s), read 2.37 s and 2.60 s (27.0 and
+24.6 MiB/s). Against the half-parse build's high speed mode: reads about twice as fast, writes about the same.
+
+A card inserted while 6.18 #4 ran (booted without it) was found by the poll: "new UHS-I speed SDR104 SDHC card" at
+279.3 s of uptime. It never became usable: about 2.3 s after each detection "Card stuck being busy!
+__mmc_poll_for_busy", "tried to HW reset card, got error -110", "mmcblk1: unable to read partition table", "card
+aaaa removed", and 0.4 s later the next detection. 14 detections in 37 s (279 s to 316 s), 156 `mmc1` lines by
+306 s; `/dev/mmcblk1*` present only between a detection and its removal. After the last removal `ios` showed
+400 kHz, 1 bit, legacy, 3.30 V while `vddsdio` read 1800000 uV. A reboot with the card in gave the working SDR104
+card above.
+
 ## Updating on the device
 
 ### 32. Old kernels, an idle IPA, and an update that ended in Android
