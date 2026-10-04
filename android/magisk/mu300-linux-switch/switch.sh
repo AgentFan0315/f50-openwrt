@@ -56,35 +56,48 @@ live=$(hex_of "$MISC" "$BC_OFFSET" 32)
 [ "$(echo "$live" | cut -c9-16)" = "$MAGIC" ] || die "misc does not hold an AOSP bootloader_control block ($live)"
 
 slot=${MU300_SLOT_SUFFIX:-$(getprop ro.boot.slot_suffix)}
+linux_slot=
 case $slot in
     _a) android_boot=$BOOT_A; linux_boot=$BOOT_B; linux_slot=b; a_arm=$ANDROID_ARMED; b_arm=$LINUX_ARMED ;;
     _b) android_boot=$BOOT_B; linux_boot=$BOOT_A; linux_slot=a; a_arm=$LINUX_ARMED; b_arm=$ANDROID_ARMED ;;
-    *) die "Android boot slot '$slot' is unknown" ;;
 esac
 a_meta=$(echo "$live" | cut -c25-26)
 b_meta=$(echo "$live" | cut -c29-30)
 
-# what is on the Linux slot: an Android boot image starts with "ANDROID!", and the Linux image is one too, so the
-# only thing worth checking is that it is not simply a copy of Android's
-head_target=$(hex_of "$linux_boot" 0 8)
-same=no
-[ "$(head_md5 "$android_boot")" = "$(head_md5 "$linux_boot")" ] && same=yes
+# what is on the Linux slot. Every boot image starts with "ANDROID!", ours too, and after an OTA the other slot holds
+# the previous Android - not a copy of this one, and not Linux either. Ours carry loglevel=5 as the header's command
+# line (offset 44; boot/build-boot-image.py, and mu300-update keeps the header), Android's boot images do not.
+if [ -n "$linux_slot" ]; then
+    head_target=$(hex_of "$linux_boot" 0 8)
+    cmdline_target=$(hex_of "$linux_boot" 44 11)
+    same=no
+    [ "$(head_md5 "$android_boot")" = "$(head_md5 "$linux_boot")" ] && same=yes
+fi
+LINUX_CMDLINE=6c6f676c6576656c3d3500    # "loglevel=5\0"
 
 if [ "$ACTION" = status ]; then
     echo "running slot   ${slot:-unknown}"
     echo "slot a         priority $((0x$a_meta & 15)), tries $(( (0x$a_meta >> 4) & 7 )), successful $(( (0x$a_meta >> 7) & 1 ))"
     echo "slot b         priority $((0x$b_meta & 15)), tries $(( (0x$b_meta >> 4) & 7 )), successful $(( (0x$b_meta >> 7) & 1 ))"
-    if [ "$head_target" = "414e44524f494421" ]; then
-        [ "$same" = yes ] && echo "boot_$linux_slot         a copy of Android's boot image (no Linux installed)" \
-                          || echo "boot_$linux_slot         a boot image that is not Android's (this is the Linux one)"
-    else
+    if [ -z "$linux_slot" ]; then
+        echo "Linux slot     unknown (Android's slot is not _a or _b)"
+    elif [ "$head_target" != "414e44524f494421" ]; then
         echo "boot_$linux_slot         does not start with ANDROID! - not a boot image"
+    elif [ "$same" = yes ]; then
+        echo "boot_$linux_slot         a copy of Android's boot image (no Linux installed)"
+    elif [ "$cmdline_target" = "$LINUX_CMDLINE" ]; then
+        echo "boot_$linux_slot         the Linux boot image"
+    else
+        echo "boot_$linux_slot         a boot image that is not Linux (the Android from before an update?)"
     fi
     exit 0
 fi
 
+[ -n "$linux_slot" ] || die "Android boot slot '$slot' is unknown"
 [ "$head_target" = "414e44524f494421" ] || die "boot_$linux_slot is not a boot image - install Linux first"
 [ "$same" = no ] || die "boot_$linux_slot is the same image as Android's boot partition: no Linux is installed"
+[ "$cmdline_target" = "$LINUX_CMDLINE" ] ||
+    die "no Linux on boot_$linux_slot: it holds another boot image (the Android from before an update?)"
 
 # the new block: same as the live one, but with the slot suffix and the two metadata bytes of an armed trial,
 # and a fresh CRC32 (zlib, over the first 28 bytes, stored little endian at offset 28)
