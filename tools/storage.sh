@@ -55,9 +55,10 @@ $(t 'Copy off what you need and format the card elsewhere, use another card, or 
 
 # The device command that erases the mu300sd filesystem on DEV (uninstall.ps1 sends the same text, so no quotes of
 # either kind). The host has checked all of this already; the device checks it again right before the write, so a
-# wrong DEV can never reach the eMMC: not mmcblk0, an SD card in sysfs, still labelled mu300sd. Android lets go of
+# wrong DEV can never reach the eMMC: not mmcblk0, an SD card in sysfs, still ext4 labelled mu300sd. Android lets go of
 # the card first (vold mounts it as /dev/block/vold/public:179,N, which no grep for the card's name finds), then
-# anything mounted from the card's own nodes is unmounted. Prints ERASED, or REFUSED/BUSY and writes nothing.
+# anything mounted from the card's own nodes is unmounted; a card mount of either kind that is still there stops it.
+# Prints ERASED, or REFUSED/BUSY and writes nothing.
 # The first 64 MiB hold the superblock, the group descriptors and the first inode tables: mount and blkid see no
 # filesystem afterwards, and the rest of the card is free space for whatever the user formats it with.
 sd_erase_cmd() {  # sd_erase_cmd DEV  (/dev/block/mmcblk1p1, or /dev/block/mmcblk1 for a card without partitions)
@@ -65,10 +66,11 @@ sd_erase_cmd() {  # sd_erase_cmd DEV  (/dev/block/mmcblk1p1, or /dev/block/mmcbl
     _s=${MU300_SYSFS:-/sys}; _m=${MU300_MOUNTS:-/proc/mounts}
     printf '%s' "case $1 in */mmcblk0|*/mmcblk0p*) echo REFUSED $1 is the eMMC; exit 1 ;; esac; " \
         "[ x\$(cat $_s/block/$_d/device/type 2>/dev/null) = xSD ] || { echo REFUSED $_d is not an SD card; exit 1; }; " \
+        "set -- \$(dd if=$1 bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1); [ x\$1\$2 = x53ef ] || { echo REFUSED no ext4 on $1; exit 1; }; " \
         "[ x\$(dd if=$1 bs=1 skip=1144 count=16 2>/dev/null | tr -d \\\\000) = xmu300sd ] || { echo REFUSED no mu300sd on $1; exit 1; }; " \
         "for v in \$(sm list-volumes 2>/dev/null | grep -o ^public:179,[0-9]*); do sm unmount \$v >/dev/null 2>&1; done; " \
         "while read d m r; do case \$d in /dev/block/$_d|/dev/block/${_d}p*) umount \$m 2>/dev/null ;; esac; done < $_m; " \
-        "grep -q ^/dev/block/$_d $_m && { echo BUSY; exit 1; }; " \
+        "grep -q -e ^/dev/block/$_d -e public:179, $_m && { echo BUSY; exit 1; }; " \
         "dd if=/dev/zero of=$1 bs=1048576 count=64 conv=notrunc 2>/dev/null; sync; echo ERASED"
 }
 

@@ -161,10 +161,12 @@ class SdErase(ShellTest):
         t = self.tmp
         self.stub('dd', 'case "$*" in\n'
                   '  *of=*) echo "dd $*" >> "$STUBLOG/log"; [ -e "$STUBLOG/stuck" ] || rm -f "$STUBLOG/label" ;;\n'
-                  '  *skip=1080*) [ -e "$STUBLOG/label" ] && printf "\\123\\357" ;;\n'
+                  '  *skip=1080*) [ -e "$STUBLOG/label" ] && [ ! -e "$STUBLOG/nomagic" ] && printf "\\123\\357" ;;\n'
                   '  *skip=1144*) cat "$STUBLOG/label" 2>/dev/null ;;\n'
                   'esac; true')
-        self.stub('sm', 'case $1 in list-volumes) cat "$STUBLOG/vols" ;; *) echo "sm $*" >> "$STUBLOG/log" ;; esac')
+        self.stub('sm', 'case $1 in list-volumes) cat "$STUBLOG/vols" ;; *) echo "sm $*" >> "$STUBLOG/log"\n'
+                  '  [ -e "$STUBLOG/stuck-sm" ] && exit 1\n'
+                  '  grep -v "/vold/$2 " "$STUBLOG/mounts" > "$STUBLOG/m.new"; mv "$STUBLOG/m.new" "$STUBLOG/mounts" ;; esac')
         self.stub('umount', 'echo "umount $*" >> "$STUBLOG/log"; [ -e "$STUBLOG/stuck-mount" ] && exit 1\n'
                   'grep -v " $1 " "$STUBLOG/mounts" > "$STUBLOG/m.new"; mv "$STUBLOG/m.new" "$STUBLOG/mounts"')
         self.stub('sync', 'true')
@@ -246,9 +248,31 @@ class SdErase(ShellTest):
             out, log = self.run_erase(shell, tail='su_do "$(sd_erase_cmd /dev/block/mmcblk1p1)"')
             self.assertIn('REFUSED', out); self.assertNotIn('dd ', log)
             (self.tmp / 'sys/block/mmcblk1/device/type').write_text('SD\n')
+            # the ext4 magic is gone (the label bytes alone are no filesystem)
+            (self.tmp / 'nomagic').write_text('')
+            out, log = self.run_erase(shell, tail='su_do "$(sd_erase_cmd /dev/block/mmcblk1p1)"')
+            self.assertIn('REFUSED', out); self.assertNotIn('dd ', log)
+            (self.tmp / 'nomagic').unlink()
             # the label changed between the host check and the erase
             out, log = self.run_erase(shell, label='data', tail='su_do "$(sd_erase_cmd /dev/block/mmcblk1p1)"')
             self.assertIn('REFUSED', out); self.assertNotIn('dd ', log)
+
+    def test_vold_mount_that_stays_is_not_erased(self):
+        # vold mounts the card as /dev/block/vold/public:179,N: a failed sm unmount must stop the write too
+        vold = '/dev/block/vold/public:179,1 /mnt/media_rw/1234-ABCD vfat rw 0 0\n'
+        for shell in self.each_shell():
+            (self.tmp / 'mounts').write_text(vold)
+            (self.tmp / 'log').write_text('')
+            out, log = self.run_erase(shell, dev='/dev/block/mmcblk1p1')
+            self.assertIn('SURVIVED', out)                          # sm let go of it: erased
+            self.assertIn('dd if=/dev/zero', log)
+            (self.tmp / 'stuck-sm').write_text('')
+            (self.tmp / 'mounts').write_text(vold)
+            (self.tmp / 'log').write_text('')
+            out, log = self.run_erase(shell, dev='/dev/block/mmcblk1p1')
+            self.assertIn('DIE', out)
+            self.assertNotIn('dd ', log)
+            (self.tmp / 'stuck-sm').unlink()
 
     def test_still_mounted_is_not_erased(self):
         for shell in self.each_shell():

@@ -116,19 +116,20 @@ function SdExisting {
 }
 # The device command that erases the mu300sd filesystem on the card: the same text as tools/storage.sh's
 # sd_erase_cmd (tests/installer.Tests.ps1 compares them). The device checks again right before the write: never
-# mmcblk0, an SD card in sysfs, still labelled mu300sd; Android lets go of the card (vold mounts it as
-# /dev/block/vold/public:179,N), anything mounted from its own nodes is unmounted. Prints ERASED, else nothing is
-# written. Single quotes only around the parts with $ for the device (no double quotes reach it intact).
+# mmcblk0, an SD card in sysfs, still ext4 labelled mu300sd; Android lets go of the card (vold mounts it as
+# /dev/block/vold/public:179,N), anything mounted from its own nodes is unmounted, and a card mount of either kind
+# that is still there stops it. Prints ERASED, else nothing is written. Single quotes only around the parts with $ for the device (no double quotes reach it intact).
 function SdEraseCommand([string]$Dev) {
     if ($Dev -match '^/dev/block/mmcblk0') { throw "refusing ${Dev}: that is the internal eMMC" }
     if ($Dev -notmatch '^/dev/block/mmcblk[1-9](p[0-9]{1,2})?$') { throw "refusing ${Dev}: not an SD card device" }
     $d = ($Dev -replace '^/dev/block/', '') -replace 'p[0-9]+$', ''
     "case $Dev in */mmcblk0|*/mmcblk0p*) echo REFUSED $Dev is the eMMC; exit 1 ;; esac; " +
     '[ x$(cat /sys/block/' + $d + '/device/type 2>/dev/null) = xSD ] || { echo REFUSED ' + $d + ' is not an SD card; exit 1; }; ' +
+    'set -- $(dd if=' + $Dev + ' bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1); [ x$1$2 = x53ef ] || { echo REFUSED no ext4 on ' + $Dev + '; exit 1; }; ' +
     '[ x$(dd if=' + $Dev + ' bs=1 skip=1144 count=16 2>/dev/null | tr -d \\000) = xmu300sd ] || { echo REFUSED no mu300sd on ' + $Dev + '; exit 1; }; ' +
     'for v in $(sm list-volumes 2>/dev/null | grep -o ^public:179,[0-9]*); do sm unmount $v >/dev/null 2>&1; done; ' +
     'while read d m r; do case $d in /dev/block/' + $d + '|/dev/block/' + $d + 'p*) umount $m 2>/dev/null ;; esac; done < /proc/mounts; ' +
-    'grep -q ^/dev/block/' + $d + ' /proc/mounts && { echo BUSY; exit 1; }; ' +
+    'grep -q -e ^/dev/block/' + $d + ' -e public:179, /proc/mounts && { echo BUSY; exit 1; }; ' +
     'dd if=/dev/zero of=' + $Dev + ' bs=1048576 count=64 conv=notrunc 2>/dev/null; sync; echo ERASED'
 }
 function Hex32 { (SuDo 'dd if=/dev/block/by-name/misc bs=1 skip=2048 count=32 2>/dev/null | od -An -tx1') -replace '\s', '' }
