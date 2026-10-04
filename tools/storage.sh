@@ -2,7 +2,8 @@
 # tools/reset-password.sh (su_do, ask, t, die and gib are theirs).
 #   sd_probe         SD_DEV / SD_BYTES of the card in the slot (empty without one), SD_SMALL=1 when it is too small
 #   sd_existing      yes when the card already holds a mu300sd filesystem, foreign for any other ext4, else no
-#   choose_storage   SD_MODE=0|1; MU300_STORAGE=internal|sd answers without asking
+#   choose_storage   SD_MODE=0|1; MU300_STORAGE=internal|sd answers without asking (internal while the card
+#                    holds mu300sd still needs the typed word: that card would boot instead)
 #   sd_kernel_ok     a card installation refuses a kernel bundle that cannot read the card
 #   sd_erase         uninstall.sh: overwrite the start of the card's mu300sd filesystem (nothing else, ever)
 
@@ -30,22 +31,34 @@ sd_existing() {
 
 choose_storage() {
     SD_MODE=0
+    _ex=no; [ -z "$SD_DEV" ] || _ex=$(sd_existing)
     case ${MU300_STORAGE:-} in
-        internal) return 0 ;;
+        internal) internal_over_card "$_ex"; return 0 ;;
         sd) [ -n "$SD_DEV" ] || die "$(t 'MU300_STORAGE=sd, but there is no usable SD card in the device')"
             SD_MODE=1; sd_not_foreign; return 0 ;;
         '') ;;
         *) die "$(t 'MU300_STORAGE must be internal or sd')" ;;
     esac
     [ -n "$SD_DEV" ] || return 0
-    # too little room inside: the card is the way that needs no repartitioning
-    _d=internal; [ "$SIZE" -lt "$SD_MIN" ] && _d=sd
+    # too little room inside: the card is the way that needs no repartitioning; a card that holds an installation
+    # already: that is what the device starts, so it is what an update or reinstall is about
+    _d=internal; { [ "$SIZE" -lt "$SD_MIN" ] || [ "$_ex" = yes ]; } && _d=sd
     ask _st "$(t 'Where should the Linux filesystem go: internal storage or the SD card ({1}, {2})? (internal/sd)' "$SD_DEV" "$(gib "$SD_BYTES")")" $_d
     case $_st in
-        internal) ;;
+        internal) internal_over_card "$_ex" ;;
         sd) SD_MODE=1; sd_not_foreign ;;
         *) die "$(t 'invalid choice')" ;;
     esac
+}
+
+# boot/init starts a mu300sd card before anything on the eMMC, so an internal installation made while such a card
+# is in the slot never starts. Say so, and go on only when the user types the word.
+internal_over_card() {  # internal_over_card EXISTING   (sd_existing of the card in the slot)
+    [ "$1" = yes ] || return 0
+    echo "$(t 'The SD card ({1}) holds a Linux installation (mu300sd), and the device always starts that one first: an installation to internal storage does not start while this card is in the slot.' "$SD_DEV")"
+    echo "$(t 'Take the card out before the device restarts, or erase its installation first with the uninstaller.')"
+    ask _ok "$(t 'Type internal to install to internal storage anyway')" no
+    [ "$_ok" = internal ] || die "$(t 'cancelled')"
 }
 
 # A card installation needs a kernel that reads the card. The mainline bundles that do say so in ./features (older

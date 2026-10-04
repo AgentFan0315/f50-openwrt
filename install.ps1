@@ -428,16 +428,23 @@ if ($parts.Count -ne 2) { Die (T 'could not read the partition table from the de
 [int64]$SIZE = ($end - $start) * 512
 function Gib([int64]$b) { '{0:N1} GiB' -f ($b / 1GB) }
 # Where the Linux filesystem goes (tools/storage.sh's choose_storage). The caller asks; an empty answer is the
-# default: internal storage, the card when there is too little room inside (the way that needs no repartitioning).
-function ChooseStorage([string]$SdDev, [int64]$SdBytes, [int64]$InternalBytes, [string]$Forced, [string]$Answer) {
+# default (StorageDefault): internal storage; the card when there is too little room inside (the way that needs no
+# repartitioning) or when it holds an installation already (that is what the device starts).
+function StorageDefault([int64]$InternalBytes, [string]$SdState) {
+    if ($InternalBytes -lt 700MB -or $SdState -eq 'yes') { return 'sd' } else { return 'internal' }
+}
+function ChooseStorage([string]$SdDev, [int64]$SdBytes, [int64]$InternalBytes, [string]$Forced, [string]$Answer, [string]$SdState) {
     if ($Forced -eq 'internal') { return 'internal' }
     if ($Forced -eq 'sd') { if (-not $SdDev) { throw 'MU300_STORAGE=sd, but there is no usable SD card in the device' }; return 'sd' }
     if ($Forced) { throw 'MU300_STORAGE must be internal or sd' }
     if (-not $SdDev) { return 'internal' }
-    if (-not $Answer) { if ($InternalBytes -lt 700MB) { return 'sd' } else { return 'internal' } }
+    if (-not $Answer) { return (StorageDefault $InternalBytes $SdState) }
     if ($Answer -eq 'internal' -or $Answer -eq 'sd') { return $Answer }
     throw 'invalid choice'
 }
+# boot/init starts a mu300sd card before anything on the eMMC: an internal installation made while such a card is
+# in the slot never starts, so that choice needs the typed word (storage.sh's internal_over_card)
+function InternalOverCard([string]$Where, [string]$SdState) { return ($Where -eq 'internal' -and $SdState -eq 'yes') }
 # What the card holds, from the ext4 magic and label of its superblock: yes for a mu300sd filesystem, foreign for
 # any other ext4, labelled or not (someone's data: android-install.sh refuses to format it), no for anything else
 function SdState([string]$Magic, [string]$Label) {
@@ -479,17 +486,22 @@ if ($Check) {
     }
 } else {
     $ans = ''
+    if ($SD_DEV) { $sdEx = SdExisting }
     if ($SD_DEV -and -not $env:MU300_STORAGE) {
-        $def = if ($SIZE -lt 700MB) { 'sd' } else { 'internal' }
-        $ans = Ask (T 'Where should the Linux filesystem go: internal storage or the SD card ({1}, {2})? (internal/sd)' $SD_DEV (Gib $SD_BYTES)) $def
+        $ans = Ask (T 'Where should the Linux filesystem go: internal storage or the SD card ({1}, {2})? (internal/sd)' $SD_DEV (Gib $SD_BYTES)) (StorageDefault $SIZE $sdEx)
     }
-    try { $where = ChooseStorage $SD_DEV $SD_BYTES $SIZE ([string]$env:MU300_STORAGE) $ans }
+    try { $where = ChooseStorage $SD_DEV $SD_BYTES $SIZE ([string]$env:MU300_STORAGE) $ans $sdEx }
     catch { Die (T $_.Exception.Message) }
+    if (InternalOverCard $where $sdEx) {
+        Write-Host (T 'The SD card ({1}) holds a Linux installation (mu300sd), and the device always starts that one first: an installation to internal storage does not start while this card is in the slot.' $SD_DEV)
+        Write-Host (T 'Take the card out before the device restarts, or erase its installation first with the uninstaller.')
+        if ((Ask (T 'Type internal to install to internal storage anyway') 'no') -ne 'internal') { Die (T 'cancelled') }
+    }
     if ($where -eq 'sd') {
         $SD_MODE = 1
         # Another Linux filesystem on the card may be someone's data, and the device refuses to format it. Say so
         # now, not after the password, the download and the build.
-        if ((SdExisting) -eq 'foreign') {
+        if ($sdEx -eq 'foreign') {
             Die ((T 'the SD card ({1}) holds another Linux (ext4) filesystem, and the installer never formats one that is not its own (mu300sd).' $SD_DEV) + "`n" + (T 'Copy off what you need and format the card elsewhere, use another card, or install to internal storage (MU300_STORAGE=internal).'))
         }
     }

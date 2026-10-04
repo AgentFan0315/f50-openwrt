@@ -13,7 +13,7 @@ function Check($name, $got, $want) {
 
 # the functions under test, straight from install.ps1
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Top "install.ps1"), [ref]$null, [ref]$null)
-$want = 'LoadLanguage', 'T', 'NormalizeAnswer', 'Gib', 'ChooseStorage', 'SdState', 'SdKernelOk'
+$want = 'LoadLanguage', 'T', 'NormalizeAnswer', 'Gib', 'ChooseStorage', 'StorageDefault', 'InternalOverCard', 'SdState', 'SdKernelOk'
 $defs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $true)
 foreach ($d in $defs) { . ([scriptblock]::Create($d.Extent.Text)) }
 foreach ($w in 'LoadLanguage', 'T', 'NormalizeAnswer') {
@@ -69,6 +69,23 @@ $threw = $false; try { ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB '' 'usb' |
 Check 'invalid answer'     $threw $true
 $threw = $false; try { ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB 'usb' '' | Out-Null } catch { $threw = $true }
 Check 'invalid forced'     $threw $true
+
+# a card that holds an installation already is the default: init starts it before anything internal
+Check 'installed card, default'    (ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB '' '' 'yes') 'sd'
+Check 'blank card, default'        (ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB '' '' 'no') 'internal'
+Check 'foreign card, default'      (ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB '' '' 'foreign') 'internal'
+Check 'installed card, internal'   (ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB '' 'internal' 'yes') 'internal'
+Check 'StorageDefault installed'   (StorageDefault 30GB 'yes') 'sd'
+Check 'StorageDefault small'       (StorageDefault 100MB 'no') 'sd'
+Check 'StorageDefault room'        (StorageDefault 30GB 'no') 'internal'
+Check 'internal over card'         (InternalOverCard 'internal' 'yes') $true
+Check 'internal, blank card'       (InternalOverCard 'internal' 'no') $false
+Check 'internal, foreign card'     (InternalOverCard 'internal' 'foreign') $false
+Check 'sd over card'               (InternalOverCard 'sd' 'yes') $false
+$src = [IO.File]::ReadAllText((Join-Path $Top 'install.ps1'))
+$iO = $src.IndexOf('if (InternalOverCard $where $sdEx) {')
+$iA = $src.IndexOf("if ((Ask (T 'Type internal to install to internal storage anyway') 'no') -ne 'internal') { Die (T 'cancelled') }")
+Check 'internal over card asks'    ($iO -ge 0 -and $iA -gt $iO -and $iA - $iO -lt 600) $true
 
 # ---- SdState: what is on the card already (ext4 magic at 1080, label at 1144) -------------------------------------
 Check 'sd mu300sd'         (SdState '53ef' 'mu300sd') 'yes'

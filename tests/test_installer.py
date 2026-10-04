@@ -163,6 +163,41 @@ class Storage(ShellTest):
             self.assertIn('DIE', self.run_choose(shell, card, label='', answer='sd'))   # unlabelled ext4 too
 
 
+    def test_card_with_an_installation_is_the_default(self):
+        # init starts a mu300sd card before anything internal: internal storage is not the safe answer then
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
+        for shell in self.each_shell():
+            out = self.run_choose(shell, card, label='mu300sd')
+            self.assertIn('ASKED[sd]', out)
+            self.assertIn('mode=1 dev=/dev/block/mmcblk1p1', out)
+            self.assertNotIn('starts that one first', out)
+
+    def test_internal_with_an_installed_card_warns_and_needs_a_confirmation(self):
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
+        for shell in self.each_shell():
+            for kw in ({'answer': 'internal\ninternal'}, {'forced': 'internal', 'answer': 'internal'}):
+                out = self.run_choose(shell, card, label='mu300sd', **kw)
+                self.assertIn('starts that one first', out, kw)
+                self.assertIn('uninstall', out, kw)
+                self.assertIn('ASKED[no]', out, kw)
+                self.assertIn('mode=0', out, kw)
+            for kw in ({'answer': 'internal\n'}, {'forced': 'internal', 'answer': 'yes'}):
+                out = self.run_choose(shell, card, label='mu300sd', **kw)
+                self.assertIn('starts that one first', out, kw)
+                self.assertIn('DIE', out, kw)
+                self.assertNotIn('mode=', out, kw)
+
+    def test_internal_with_a_card_without_installation_asks_nothing_more(self):
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
+        for shell in self.each_shell():
+            for label in (None, 'data'):
+                (self.tmp / 'label').unlink(missing_ok=True)
+                for kw in ({'answer': 'internal'}, {'forced': 'internal'}):
+                    out = self.run_choose(shell, card, label=label, **kw)
+                    self.assertNotIn('starts that one first', out)
+                    self.assertNotIn('ASKED[no]', out)
+                    self.assertIn('mode=0', out)
+
     def test_sd_kernel_ok(self):
         # a mainline bundle without ./features: sdcard has the SD host gated off, and a card install with it would
         # never find its card (it lands in Android)

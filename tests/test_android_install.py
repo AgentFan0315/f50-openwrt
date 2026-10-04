@@ -247,3 +247,23 @@ class SdCard(ShellTest):
             self.assertIn('rc=0\n', out)
             self.assertIn('helper -u', calls)
             shutil.rmtree(self.tmp / 'mu300root-internal')
+
+    def test_internal_install_removes_a_stale_marker(self):
+        # SD_MODE=0 installs into the internal filesystem; a root-on-sd left there from an earlier card
+        # installation would make init wait for a card that is no longer what should boot
+        m = self.tmp / 'root'
+        for shell in self.each_shell():
+            (m / '.mu300').mkdir(parents=True, exist_ok=True)
+            (m / '.mu300' / 'root-on-sd').touch()
+            out, _ = self.run_fn(shell, f'sd_unmark {m}', pre='set -e; SD_MODE=1')
+            self.assertIn('rc=0\n', out)
+            self.assertTrue((m / '.mu300' / 'root-on-sd').exists())
+            out, _ = self.run_fn(shell, f'sd_unmark {m}', pre='set -e; SD_MODE=0')
+            self.assertIn('rc=0\n', out)
+            self.assertFalse((m / '.mu300' / 'root-on-sd').exists())
+            out, _ = self.run_fn(shell, f'sd_unmark {m}', pre='set -e; unset SD_MODE')   # older env files
+            self.assertIn('rc=0\n', out)
+
+    def test_unmark_runs_on_the_installed_filesystem(self):
+        self.assertIn('\nsd_unmark $M\n', SRC)
+        self.assertLess(SRC.index('mkdir -p $M/.mu300\n'), SRC.index('\nsd_unmark $M\n'))

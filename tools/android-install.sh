@@ -106,6 +106,11 @@ sd_mark_internal() {
     fi
     sync; sh $T/android-mount-mu300root.sh -u $I >/dev/null 2>&1 || true
 }
+# An installation into the internal filesystem: a root-on-sd left there by an earlier card installation no longer
+# says what should boot (init would wait for a card first), so it goes.
+sd_unmark() {  # sd_unmark ROOT
+    [ "${SD_MODE:-0}" = 1 ] || rm -f "$1/.mu300/root-on-sd"
+}
 # --- sd end
 
 if [ "${SD_MODE:-0}" = 1 ]; then
@@ -244,6 +249,7 @@ for os in $OSES; do
     rm -f $tarball
 done
 mkdir -p $M/.mu300
+sd_unmark $M
 echo "$BOOT_OS" > $M/.mu300/boot-os
 case ${BOOT_ATTEMPTS:-} in [1-6]) echo "$BOOT_ATTEMPTS" > $M/.mu300/boot-attempts ;; esac
 case ${KERNEL:-5.4} in
