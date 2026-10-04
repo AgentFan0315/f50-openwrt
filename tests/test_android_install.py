@@ -270,8 +270,9 @@ class Systems(ShellTest):
         self.M = self.T / 'mu300root'
         (self.M / '.mu300').mkdir(parents=True)
         # Android's sed has -i like GNU's; the Mac's wants an argument
-        self.stub('sed', 'if [ "$1" = -i ]; then shift; if sed --version >/dev/null 2>&1; then exec /usr/bin/sed -i "$@"; '
-                         'else exec /usr/bin/sed -i "" "$@"; fi; fi; exec /usr/bin/sed "$@"')
+        real = shutil.which('sed')   # resolved before the stubs are on PATH; /usr/bin/sed is not there on Alpine
+        self.stub('sed', f'S={real}\nif [ "$1" = -i ]; then shift; if "$S" --version >/dev/null 2>&1; then exec "$S" -i "$@"; '
+                         'else exec "$S" -i "" "$@"; fi; fi; exec "$S" "$@"')
         self.wipe = self.block('legacy-wipe')
         self.install = self.block('install-os')
 
