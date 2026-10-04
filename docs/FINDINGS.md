@@ -1599,7 +1599,9 @@ that build (the card ran at 50 MHz "high speed", every poll tried SDIO, SD and M
 - 5.4 (release v2026.09.30's kernel): `mmc0 mmc1 mmc2` (the vendor driver also probes `sdio_wifi`);
   `/dev/mmcblk1` and `/dev/mmcblk1p1`, type `SD`, 62333952 sectors. The vendor EIC driver gives the card detect
   ("Got CD GPIO"), and the card runs as "ultra high speed SDR104" after tuning, at 23.75 s (the vendor modules
-  load late).
+  load late). That time did not come back: on the card installation (31k, "Kernel 5.4") seven boots had
+  `mmcblk1` at 3.40 to 3.63 s, well before init looks for it. Init still allows a card under 5.4 up to 30 s
+  instead of 8 when it waits at all (a host that waits for its card-detect line instead of polling).
 
 - That build, card pulled at 392 s of uptime: "mmc1: card aaaa removed", `/dev/mmcblk1*` gone, and the log stayed
   at 5 `mmc1` lines from 419 s to 603 s.
@@ -1664,6 +1666,15 @@ on the card, the earlier installation still in the internal region.
 - **Uninstall.** Internal kept, card erased: `erased (/dev/block/mmcblk1p1)`, the internal `root-on-sd` marker
   removed, the internal systems intact; `install.sh --check` then reported `existing mu300sd filesystem: no`.
 - **Without the card.** Not measured yet (the fallback to the internal system after the 8 s wait, `stage=sd-root-missing`).
+- **Kernel 5.4.** Release v2026.10.08's 5.4 bundle with this branch's init in its generic ramdisk and `sdcard` in
+  `./features`, installed on the card system with `mu300-update kernel 5.4` (2026-10-05): 7 boots, 2 with the init
+  from before the longer wait and 5 with the one that has it, all from the card (`/run/mu300-root-dev`
+  `/dev/mmcblk1p1`, OpenWrt). `mmcblk1` at 3.40 to 3.63 s and `p1` at 3.43 to 5.35 s; the
+  vendor modules done at 10.23 to 11.00 s and `stage=sd-root dev=/dev/mmcblk1p1` at 11.65 to 12.49 s, so init found
+  the card on its first look and never waited; 0 `mmc1` error, timeout or crc lines in the five boots counted. The
+  wait that now runs past 8 s while a card may still be coming was checked against the live 5.4 sysfs: a card that
+  is set up stops it (`sd_coming` 1), a 5.4 host with no card device yet keeps it going (0). Back on 6.18.55 with
+  the same init: 2 boots from the card, `mmcblk1` at 2.46 and 2.47 s, `stage=sd-root` at 8.05 and 8.12 s.
 - **U30 Air.** No SD host at all: `/sys/class/mmc_host` holds `mmc0` only, `/sys/block` only `mmcblk0*` (Android,
   stock kernel). `sd_probe` finds nothing, and the installers never ask.
 
