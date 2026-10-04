@@ -1,5 +1,6 @@
 """tools/linux-mode.sh: which adb device install.sh and uninstall.sh work on. With a phone or tablet attached next to
 the device the installer must ask, never pick one by itself."""
+import re
 import unittest
 
 from helpers import TOP, ShellTest
@@ -312,3 +313,71 @@ class SdErase(ShellTest):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ChooseSystems(ShellTest):
+    """install.sh's choose_systems, cut out between its markers: which systems, which OpenWrt, which one boots."""
+    SRC = (TOP / 'install.sh').read_text()
+
+    def run_choose(self, shell, choice, answers='', preset='', size=100):
+        m = re.search(r'# --- choose-systems begin\n(.*?)# --- choose-systems end', self.SRC, re.S)
+        self.assertIsNotNone(m, 'install.sh has no choose-systems block')
+        code = (f'TOP="{TOP}"; . "$TOP/tools/i18n.sh"; MU300_LANG=en; OWRT_VER=25.12.5; '
+                f'NEED_OPENWRT=1; NEED_UBUNTU=2; NEED_BOTH=3; SIZE={size}; '
+                'say() { :; }; die() { echo "DIE $*"; exit 1; }; '
+                'ask() { printf "ASKED[%s] " "$3"; read -r _a; [ -n "$_a" ] || _a=$3; eval "$1=\\$_a"; }; '
+                f'choice={choice}; ' + (f'MU300_OPENWRT={preset}; ' if preset else 'unset MU300_OPENWRT; ') +
+                m.group(1) + 'choose_systems; echo "OSES=$OSES BOOT=$BOOT_OS"')
+        return self.sh(shell, code, stdin=answers).stdout
+
+    def test_both_with_the_control_panel(self):
+        for shell in self.each_shell():
+            out = self.run_choose(shell, 3, '2\nopenwrt-luci\n')
+            self.assertIn('OSES=ubuntu openwrt-luci BOOT=openwrt-luci', out, shell)
+
+    def test_plain_openwrt_asks_too(self):
+        for shell in self.each_shell():
+            out = self.run_choose(shell, 2, '1\n')
+            self.assertIn('OSES=openwrt BOOT=openwrt', out, shell)
+            self.assertIn('1) OpenWrt 25.12.5: the standard LuCI', out)
+            self.assertNotIn('Which one should boot', out)
+
+    def test_default_is_the_standard_openwrt(self):
+        for shell in self.each_shell():
+            self.assertIn('OSES=openwrt BOOT=openwrt', self.run_choose(shell, 2, '\n'), shell)
+
+    def test_ubuntu_alone_never_asks_which_openwrt(self):
+        for shell in self.each_shell():
+            out = self.run_choose(shell, 1)
+            self.assertNotIn('ASKED', out)
+            self.assertIn('OSES=ubuntu BOOT=ubuntu', out)
+
+    def test_preset_answers_without_the_question(self):
+        for shell in self.each_shell():
+            out = self.run_choose(shell, 2, preset='luci')
+            self.assertNotIn('ASKED', out)
+            self.assertIn('OSES=openwrt-luci BOOT=openwrt-luci', out, shell)
+            out = self.run_choose(shell, 3, 'ubuntu\n', preset='plain')
+            self.assertEqual(out.count('ASKED'), 1, out)
+            self.assertIn('OSES=ubuntu openwrt BOOT=ubuntu', out)
+
+    def test_bad_preset(self):
+        for shell in self.each_shell():
+            self.assertIn('DIE MU300_OPENWRT must be plain or luci', self.run_choose(shell, 2, preset='x'), shell)
+
+    def test_boot_question_offers_the_chosen_names(self):
+        for shell in self.each_shell():
+            out = self.run_choose(shell, 3, '2\nubuntu\n')
+            self.assertIn('OSES=ubuntu openwrt-luci BOOT=ubuntu', out, shell)
+
+    def test_boot_answer_must_be_in_oses(self):
+        for shell in self.each_shell():
+            self.assertIn('DIE invalid system', self.run_choose(shell, 3, '2\nopenwrt\n'), shell)
+            self.assertIn('DIE invalid system', self.run_choose(shell, 3, '1\nopenwrt-luci\n'), shell)
+
+    def test_invalid_choice_and_small_device(self):
+        for shell in self.each_shell():
+            self.assertIn('DIE invalid choice', self.run_choose(shell, 9), shell)
+            self.assertIn('DIE invalid choice', self.run_choose(shell, 2, '7\n'), shell)
+            self.assertIn('DIE that choice needs', self.run_choose(shell, 3, '2\n', size=2), shell)
+            self.assertIn('OSES=openwrt-luci', self.run_choose(shell, 2, '2\n', size=1), shell)

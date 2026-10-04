@@ -338,11 +338,36 @@ echo "  $(t '2) OpenWrt {1} (router, LuCI web UI, ~140 MiB RAM in use)' "$OWRT_V
 echo "  $(t '3) both (switch later with: mu300-os ubuntu|openwrt)')"
 [ $SIZE -lt $NEED_BOTH ] && echo "  $(t '(this device has {1}: {2})' "$(gib $SIZE)" "$([ $SIZE -ge $NEED_UBUNTU ] && t 'one system fits, not both' || t 'only OpenWrt fits')")"
 ask choice "$(t 'Choice')" 3
-case $choice in 1) OSES=ubuntu ;; 2) OSES=openwrt ;; 3) OSES="ubuntu openwrt" ;; *) die "$(t 'invalid choice')" ;; esac
-need=$NEED_OPENWRT; [ "$OSES" = ubuntu ] && need=$NEED_UBUNTU; [ "$OSES" = "ubuntu openwrt" ] && need=$NEED_BOTH
-[ $SIZE -ge $need ] || die "$(t 'that choice needs about {1} MiB and this device has {2} MiB of free space' "$((need / 1048576))" "$((SIZE / 1048576))")"
-BOOT_OS=${OSES%% *}
-[ "$choice" = 3 ] && { ask BOOT_OS "$(t 'Which one should boot (ubuntu/openwrt)')" ubuntu; case $BOOT_OS in ubuntu|openwrt) ;; *) die "$(t 'invalid system')" ;; esac; }
+# --- choose-systems begin
+# choose_systems: OSES from $choice (1 Ubuntu, 2 OpenWrt, 3 both); OpenWrt is asked which one (MU300_OPENWRT=plain|luci
+# answers without asking), "openwrt-luci" then stands in OSES instead of "openwrt"; BOOT_OS is the system that boots.
+choose_systems() {
+    case $choice in 1) OSES=ubuntu ;; 2) OSES=openwrt ;; 3) OSES="ubuntu openwrt" ;; *) die "$(t 'invalid choice')" ;; esac
+    case " $OSES " in *" openwrt "*)
+        case ${MU300_OPENWRT:-} in
+            plain) _w=1 ;;
+            luci) _w=2 ;;
+            '')
+                say "$(t 'Which OpenWrt?')"
+                echo "  $(t '1) OpenWrt {1}: the standard LuCI web interface' "$OWRT_VER")"
+                echo "  $(t '2) OpenWrt {1} with the MU300 control panel: dashboard, cellular locks, SMS, AT terminal, USB modes (by kanoqwq)' "$OWRT_VER")"
+                ask _w "$(t 'Choice')" 1 ;;
+            *) die "$(t 'MU300_OPENWRT must be plain or luci')" ;;
+        esac
+        case $_w in 1) ;; 2) OSES=$(echo "$OSES" | sed 's/openwrt/openwrt-luci/') ;; *) die "$(t 'invalid choice')" ;; esac ;;
+    esac
+    need=$NEED_OPENWRT; [ "$OSES" = ubuntu ] && need=$NEED_UBUNTU
+    case $OSES in "ubuntu openwrt"*) need=$NEED_BOTH ;; esac
+    [ $SIZE -ge $need ] || die "$(t 'that choice needs about {1} MiB and this device has {2} MiB of free space' "$((need / 1048576))" "$((SIZE / 1048576))")"
+    BOOT_OS=${OSES%% *}
+    case $OSES in *" "*)
+        _names=$(echo "$OSES" | tr ' ' '/')
+        ask BOOT_OS "$(t 'Which one should boot ({1})' "$_names")" "$BOOT_OS"
+        case " $OSES " in *" $BOOT_OS "*) ;; *) die "$(t 'invalid system')" ;; esac ;;
+    esac
+}
+# --- choose-systems end
+choose_systems
 UBUNTU=24.04
 case " $OSES " in *" ubuntu "*) if [ $MODE = prebuilt ]; then
     say "$(t 'Which Ubuntu?')"
@@ -548,11 +573,10 @@ case " $OSES " in *" ubuntu "*) reuse ubuntu || {
       -v "$WORK/hev-socks5-tunnel":/hev-socks5-tunnel:ro $gpuargs mu300-ubuntu:24.04 bash /w/assemble.sh >/dev/null
     mv "$B/mu300-ubuntu-24.04-rootfs.tar.gz" "$WORK/mu300-ubuntu.tar.gz"; rm -rf "$B"; } ;;
 esac
-case " $OSES " in *" openwrt "*) reuse openwrt || {
+for os in $OSES; do case $os in openwrt|openwrt-*) reuse $os || {
     say "$(t 'Building the OpenWrt root filesystem')"
-    MU300_INPUTS="$WORK" sh "$TOP/openwrt/build-rootfs.sh" mu300-openwrt-rootfs.tar.gz >/dev/null
-    mv "$TOP/openwrt/mu300-openwrt-rootfs.tar.gz" "$WORK/mu300-openwrt.tar.gz"; } ;;
-esac
+    MU300_SYSTEM=$os MU300_INPUTS="$WORK" sh "$TOP/openwrt/build-rootfs.sh" mu300-$os-rootfs.tar.gz >/dev/null
+    mv "$TOP/openwrt/mu300-$os-rootfs.tar.gz" "$WORK/mu300-$os.tar.gz"; } ;; esac; done
 BUSYBOX=$WORK/busybox; LOGDW=$WORK/tools/logdw/logdw
 PWHASH=$(printf '%s' "$pw1" | docker run --rm -i mu300-ubuntu:24.04 openssl passwd -6 -stdin)
 fi
@@ -618,6 +642,6 @@ sh "$TOP/tools/install-magisk-module.sh" || echo "  $(t '(skipped; the installer
 say "$(t 'Done. Rebooting into {1}' "$BOOT_OS")"
 IP=192.168.77.1; [ $DEVICE = u30air ] && IP=192.168.78.1
 echo "  $(t 'USB network: {1}   SSH: {2}' $IP "$([ "$BOOT_OS" = ubuntu ] && echo ubuntu@$IP || echo root@$IP, LuCI http://$IP)")"
-echo "  $(t 'switch systems: mu300-os ubuntu|openwrt   back to Android: mu300-next-boot android')"
+echo "  $(t 'switch systems: mu300-os {1}   back to Android: mu300-next-boot android' "$(echo "$OSES" | tr ' ' '|')")"
 echo "  $(t 'back to Linux from Android (with Magisk): su -c mu300-linux')"
 adb reboot </dev/null
