@@ -1645,12 +1645,13 @@ on the card, the earlier installation still in the internal region.
 - **Update.** `mu300-update boot` with a 6.18 bundle that has no `./features` refused (`this kernel bundle cannot
   read the SD card, and this system runs from it; nothing was changed`, boot_b unchanged); with the `sdcard`
   bundle it installed the 31 modules into both systems and the device booted from the card again.
-- **Reboots.** A loop rebooted OpenWrt on the card 19 times. 17 came back on the card, each with the card found at
-  2.43 to 2.46 s ("new UHS-I speed SDR104"), 0 `mmc1` error, timeout or crc lines, and SSH 106 s after the `reboot`
-  (91 s of uptime). One hung (below). In one the cable was pulled and plugged back in while the board was starting.
-  None landed on the internal system. Three restarts from outside the loop (that replugged cable, and two reboots
-  meant for another board on the same address) also came up on the card, as did the five reboots of the steps
-  before the loop.
+- **Reboots.** A loop rebooted OpenWrt on the card 19 times; 18 came back on the card and 1 hung (the 10th, below):
+  1 failure in 19. Of the 18, 17 came up undisturbed, each with the card found at 2.43 to 2.46 s ("new UHS-I speed
+  SDR104"), 0 `mmc1` error, timeout or crc lines, and SSH 106 s after the `reboot` (91 s of uptime); in the 12th
+  the cable was pulled and plugged back in while the board was starting, and the cold boot after that came up on
+  the card as well. None landed on the internal system. Two restarts from outside the loop (reboots meant for
+  another board on the same address) also came up on the card, as did the five reboots of the steps before the
+  loop.
 - **One boot hung.** The 10th reboot stopped at 15.09 s of uptime: init had found the card (`stage=sd-root
   dev=/dev/mmcblk1p1` at 8.08 s), switched to OpenWrt at 8.13 s, procd had loaded `/etc/modules.d`, and the last
   line in `console-ramoops` is `mali 23140000.gpu: GPU identified as 0x1 arch 9.0.9 r0p1 status 0`. A good boot
