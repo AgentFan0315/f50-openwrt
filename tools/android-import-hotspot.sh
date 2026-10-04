@@ -2,9 +2,11 @@
 # From rooted Android: copy the current Android hotspot SSID/passphrase into the Linux rootfs
 # (/etc/mu300/hotspot.conf, mode 0600). The passphrase never leaves the device.
 # requires tools/android-mount-mu300root.sh pushed to /data/local/tmp
-# The Linux filesystem is mu300root in internal storage; with MU300_SD_DEV=<card device> in the environment it is
-# the mu300sd filesystem on the SD card instead (the mount helper refuses any card without that label).
+# The Linux filesystem is the installation that boots: the mu300sd filesystem on the SD card when the card holds one
+# (boot/init looks there first), mu300root in internal storage otherwise. MU300_SD_DEV=<card device> names the card
+# by hand (the mount helper refuses any card without that label).
 set -eu
+TOP=$(cd "$(dirname "$0")/.." && pwd)
 SD=${MU300_SD_DEV:-}
 case $SD in
     '') ;;
@@ -12,6 +14,16 @@ case $SD in
     /dev/block/mmcblk[1-9]|/dev/block/mmcblk[1-9]p[0-9]|/dev/block/mmcblk[1-9]p[0-9][0-9]) ;;
     *) echo "MU300_SD_DEV=$SD is not an SD card device" >&2; exit 1 ;;
 esac
+if [ -z "$SD" ]; then
+    # the same search reset-password.sh does (tools/storage.sh; this script is English only)
+    su_do() { adb shell "su -c '$1'" </dev/null | tr -d '\r'; }
+    t() { printf '%s' "$1"; }
+    . "$TOP/tools/storage.sh"; sd_probe
+    if [ -n "$SD_DEV" ] && [ "$(sd_existing)" = yes ]; then
+        SD=$SD_DEV
+        echo "SD card $SD (mu300sd): the installation that boots"
+    fi
+fi
 adb shell "su -c '
 set -e
 X=/data/misc/apexdata/com.android.wifi/WifiConfigStoreSoftAp.xml

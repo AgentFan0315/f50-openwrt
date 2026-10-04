@@ -269,6 +269,51 @@ class InstallEnv(ShellTest):
         self.assertIn('write_install_env > "$env"', src)
         self.assertNotIn("printf 'OFF=", src)
 
+
+class ImportHotspot(ShellTest):
+    """tools/android-import-hotspot.sh writes into the installation that boots: the card's when it holds mu300sd
+    (found the way reset-password.sh finds it), the internal one otherwise; MU300_SD_DEV still names one by hand."""
+
+    def run_import(self, shell, card, label=None, **env):
+        (self.tmp / 'sd').write_text(card)
+        if label is not None:
+            (self.tmp / 'label').write_text(label)
+        else:
+            (self.tmp / 'label').unlink(missing_ok=True)
+        # adb shell "su -c '...'": the card probe and its superblock, then the import itself (recorded)
+        self.stub('adb', 'case "$2" in *"/sys/block/mmcblk[1-9]"*) cat "$STUBLOG/sd" ;; '
+                         '*skip=1080*) [ -e "$STUBLOG/label" ] && echo " 53 ef" ;; '
+                         '*skip=1144*) cat "$STUBLOG/label" 2>/dev/null ;; '
+                         '*WifiConfigStoreSoftAp*) printf %s "$2" > "$STUBLOG/import"; echo imported ;; esac')
+        (self.tmp / 'import').unlink(missing_ok=True)
+        r = self.script(shell, TOP / 'tools' / 'android-import-hotspot.sh', **env)
+        imp = (self.tmp / 'import').read_text() if (self.tmp / 'import').exists() else ''
+        return r, imp
+
+    def test_card_installation_is_found_by_itself(self):
+        for shell in self.each_shell():
+            r, imp = self.run_import(shell, '/dev/block/mmcblk1p1 62333952 SD\n', label='mu300sd')
+            self.assertEqual(0, r.returncode, r.stderr)
+            self.assertIn('MU300_SD_DEV=/dev/block/mmcblk1p1 sh /data/local/tmp/android-mount-mu300root.sh', imp)
+
+    def test_internal_without_an_installed_card(self):
+        for shell in self.each_shell():
+            for card, label in (('', None), ('/dev/block/mmcblk1p1 62333952 SD\n', None),
+                                ('/dev/block/mmcblk1p1 62333952 SD\n', 'data')):
+                r, imp = self.run_import(shell, card, label=label)
+                self.assertEqual(0, r.returncode, r.stderr)
+                self.assertIn('android-mount-mu300root.sh', imp)
+                self.assertNotIn('MU300_SD_DEV', imp, (card, label))
+
+    def test_named_card_still_wins_and_the_emmc_is_refused(self):
+        for shell in self.each_shell():
+            r, imp = self.run_import(shell, '', MU300_SD_DEV='/dev/block/mmcblk2p1')
+            self.assertIn('MU300_SD_DEV=/dev/block/mmcblk2p1 sh', imp)
+            r, imp = self.run_import(shell, '/dev/block/mmcblk1p1 62333952 SD\n', label='mu300sd',
+                                     MU300_SD_DEV='/dev/block/mmcblk0p1')
+            self.assertNotEqual(0, r.returncode)
+            self.assertEqual('', imp)
+
 class SdErase(ShellTest):
     """tools/storage.sh's sd_erase (uninstall.sh): the card is erased only when it holds mu300sd, never the eMMC.
 
