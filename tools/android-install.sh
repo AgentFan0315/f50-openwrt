@@ -6,7 +6,7 @@
 #                      that region; OFF/SIZE are then not used
 #   INTERNAL_EXISTS=0|1  with SD_MODE=1: an internal mu300root exists at OFF/SIZE and gets the root-on-sd marker
 #   FORMAT=0|1         create the ext4 filesystem (mu300root in the region, mu300sd on the card)
-#   OSES="ubuntu openwrt"  systems to (re)install from /data/local/tmp/mu300-<os>.tar.gz
+#   OSES="ubuntu openwrt openwrt-luci"  systems to (re)install from /data/local/tmp/mu300-<os>.tar.gz
 #                      (plus mu300-vendor-<os>.tar.gz with the device's own vendor files for prebuilt images)
 #   WIPE_LEGACY=0|1    remove a first-generation Ubuntu that lives directly in the filesystem root
 #   UPDATE=0|1         keep the settings and user data of the systems being reinstalled
@@ -153,12 +153,14 @@ MU300_OFF=$OFF MU300_SIZE=$SIZE sh $T/android-mount-mu300root.sh $M
 trap 'sync; sh $T/android-mount-mu300root.sh -u $M >/dev/null 2>&1; true' EXIT
 fi
 
+# --- legacy-wipe begin
 if [ "$WIPE_LEGACY" = 1 ] && { [ -x $M/lib/systemd/systemd ] || [ -L $M/lib ]; }; then
     say "removing the root-level Ubuntu"
     for e in $M/* $M/.[!.]*; do
-        case "${e##*/}" in lost+found|.mu300|ubuntu|openwrt) ;; *) rm -rf "$e" ;; esac
+        case "${e##*/}" in lost+found|.mu300|ubuntu|openwrt|openwrt-*) ;; *) rm -rf "$e" ;; esac
     done
 fi
+# --- legacy-wipe end
 
 ssid=; psk=
 if [ "$IMPORT_HOTSPOT" = 1 ]; then
@@ -168,6 +170,7 @@ if [ "$IMPORT_HOTSPOT" = 1 ]; then
     [ -n "$ssid" ] && [ ${#psk} -ge 8 ] || { say "no usable Android hotspot config, a random password will be generated"; ssid=; psk=; }
 fi
 
+# --- install-os begin
 for os in $OSES; do
     tarball=$T/mu300-$os.tar.gz
     [ -f $tarball ] || { say "missing $tarball"; exit 1; }
@@ -183,7 +186,7 @@ for os in $OSES; do
     if [ "${UPDATE:-0}" = 1 ] && [ -d $M/$os ]; then
         case $os in
             ubuntu) keep="etc/mu300 etc/ssh etc/hostname etc/localtime etc/timezone etc/fstab home root srv usr/local var/lib/bluetooth" ;;
-            openwrt) keep="etc/config etc/mu300 etc/dropbear etc/rc.local root" ;;
+            openwrt|openwrt-*) keep="etc/config etc/mu300 etc/dropbear etc/rc.local root" ;;
         esac
         kept=
         for k in $keep; do
@@ -211,7 +214,7 @@ for os in $OSES; do
                         cp -a "$l" "$M/$os.new/etc/systemd/system/$t/$u" && extra="$extra $u"
                     done
                 done ;;
-            openwrt)
+            openwrt|openwrt-*)
                 for l in $M/$os/etc/rc.d/*; do
                     [ -L "$l" ] || [ -e "$l" ] || continue
                     u=${l##*/}
@@ -238,13 +241,14 @@ for os in $OSES; do
         rm -f $R/etc/.mu300-accounts-from-image   # the password is the one just chosen, not one to carry over
         case $os in
             ubuntu) sed -i "s|^ubuntu:[^:]*:|ubuntu:$PWHASH:|" $R/etc/shadow ;;
-            openwrt) sed -i "s|^root:[^:]*:|root:$PWHASH:|" $R/etc/shadow ;;
+            openwrt|openwrt-*) sed -i "s|^root:[^:]*:|root:$PWHASH:|" $R/etc/shadow ;;
         esac
     fi
     rm -f $tarball
 done
 mkdir -p $M/.mu300
 echo "$BOOT_OS" > $M/.mu300/boot-os
+# --- install-os end
 case ${BOOT_ATTEMPTS:-} in [1-6]) echo "$BOOT_ATTEMPTS" > $M/.mu300/boot-attempts ;; esac
 case ${KERNEL:-5.4} in
     5.4|6.18|7.2) mkdir -p $M/boot; echo "${KERNEL:-5.4}" > $M/boot/kernel; echo "${KERNEL:-5.4}" > $M/boot/installed.kernel ;;
@@ -252,7 +256,7 @@ esac
 # the boot image is the installer's now: a release tag left by an earlier mu300-update would describe another one
 rm -f $M/boot/installed.tag
 [ -n "$ssid" ] && say "hotspot: SSID $ssid imported (passphrase ${#psk} chars)"
-say "installed: $(ls -d $M/ubuntu $M/openwrt 2>/dev/null | sed "s|$M/||g" | tr '\n' ' ')boot-os=$BOOT_OS default-linux=$DEFAULT_LINUX"
+say "installed: $(ls -d $M/ubuntu $M/openwrt $M/openwrt-luci 2>/dev/null | sed "s|$M/||g" | tr '\n' ' ')boot-os=$BOOT_OS default-linux=$DEFAULT_LINUX"
 sd_mark_internal
 rm -f $T/mu300-install.env
 echo MU300-INSTALL-OK   # install.sh checks for this line (set -e stops before it on any failure)
