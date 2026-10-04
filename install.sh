@@ -498,6 +498,7 @@ if [ "$KERNEL" != 5.4 ]; then
     [ -s "$KMAIN/Image" ] && [ -s "$KMAIN/ramdisk-generic.lz4" ] && [ -s "$KMAIN/kernel.release" ] || die "$(t '{1} is incomplete' "mu300-kernel-$KERNEL.tar.gz")"
     # a bundle names the devices it runs on; older mainline kernels do not bring up the U30 Air's USB (FINDINGS 33c)
     [ $DEVICE = f50 ] || grep -qw $DEVICE "$KMAIN/devices" 2>/dev/null || die "$(t 'release {1} does not support this device yet; use a newer one' "$RELEASE")"
+    sd_kernel_ok "$KMAIN" || die "$(t 'the {1} kernel of release {2} cannot read the SD card: choose kernel 5.4, a newer release, or internal storage (MU300_STORAGE=internal)' "$KERNEL" "$RELEASE")"
 fi
 say "$(t 'Adding the vendor files from your device to the images')"
 for os in $OSES; do

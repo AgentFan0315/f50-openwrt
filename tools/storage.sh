@@ -3,6 +3,7 @@
 #   sd_probe         SD_DEV / SD_BYTES of the card in the slot (empty without one), SD_SMALL=1 when it is too small
 #   sd_existing      yes when the card already holds a mu300sd filesystem, foreign for any other ext4, else no
 #   choose_storage   SD_MODE=0|1; MU300_STORAGE=internal|sd answers without asking
+#   sd_kernel_ok     a card installation refuses a kernel bundle that cannot read the card
 #   sd_erase         uninstall.sh: overwrite the start of the card's mu300sd filesystem (nothing else, ever)
 
 SD_MIN=$((700 * 1024 * 1024))
@@ -45,6 +46,13 @@ choose_storage() {
         sd) SD_MODE=1; sd_not_foreign ;;
         *) die "$(t 'invalid choice')" ;;
     esac
+}
+
+# A card installation needs a kernel that reads the card. The mainline bundles that do say so in ./features (older
+# ones gate the SD host off, FINDINGS 31j): with one of those the device would not find its card and land in Android.
+sd_kernel_ok() {  # sd_kernel_ok DIR: the unpacked bundle DIR is fine for this installation
+    [ "$SD_MODE" = 1 ] || return 0
+    grep -qx sdcard "$1/features" 2>/dev/null || return 1
 }
 
 # Another Linux filesystem on the card may be someone's data, and the device refuses to format it. Say so now,

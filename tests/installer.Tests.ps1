@@ -13,7 +13,7 @@ function Check($name, $got, $want) {
 
 # the functions under test, straight from install.ps1
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Top "install.ps1"), [ref]$null, [ref]$null)
-$want = 'LoadLanguage', 'T', 'NormalizeAnswer', 'Gib', 'ChooseStorage', 'SdState'
+$want = 'LoadLanguage', 'T', 'NormalizeAnswer', 'Gib', 'ChooseStorage', 'SdState', 'SdKernelOk'
 $defs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $true)
 foreach ($d in $defs) { . ([scriptblock]::Create($d.Extent.Text)) }
 foreach ($w in 'LoadLanguage', 'T', 'NormalizeAnswer') {
@@ -77,6 +77,21 @@ Check 'sd no label'        (SdState '53ef' '') 'foreign'
 Check 'sd root label'      (SdState '53ef' 'mu300root') 'foreign'
 Check 'sd not ext4'        (SdState '0000' 'mu300sd') 'no'
 Check 'sd unreadable'      (SdState '' '') 'no'
+
+# ---- SdKernelOk: a card installation needs a bundle that lists sdcard in ./features ------------------------------
+$kd = Join-Path ([IO.Path]::GetTempPath()) ('mu300-k-' + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $kd | Out-Null
+Check 'sd kernel, no features'      (SdKernelOk 1 $kd) $false
+Check 'internal, no features'       (SdKernelOk 0 $kd) $true
+[IO.File]::WriteAllText((Join-Path $kd 'features'), "other`n")
+Check 'sd kernel, other features'   (SdKernelOk 1 $kd) $false
+[IO.File]::WriteAllText((Join-Path $kd 'features'), "sdcard`n")
+Check 'sd kernel, sdcard'           (SdKernelOk 1 $kd) $true
+Remove-Item -Recurse -Force $kd
+$src = [IO.File]::ReadAllText((Join-Path $Top 'install.ps1'))
+$iUnpack = $src.IndexOf('& tar -xzf "$REL\mu300-kernel-$KERNEL.tar.gz" -C $KMAIN')
+$iCheck = $src.IndexOf('if (-not (SdKernelOk $SD_MODE $KMAIN))')
+Check 'sd kernel check after unpack' ($iUnpack -ge 0 -and $iCheck -gt $iUnpack) $true
 
 # ---- uninstall.ps1: what is on the card, and the command that erases it -----------------------------------------
 $uast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Top "uninstall.ps1"), [ref]$null, [ref]$null)

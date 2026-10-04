@@ -163,6 +163,27 @@ class Storage(ShellTest):
             self.assertIn('DIE', self.run_choose(shell, card, label='', answer='sd'))   # unlabelled ext4 too
 
 
+    def test_sd_kernel_ok(self):
+        # a mainline bundle without ./features: sdcard has the SD host gated off, and a card install with it would
+        # never find its card (it lands in Android)
+        k = self.tmp / 'kmain'
+        k.mkdir()
+        for shell in self.each_shell():
+            for features, sd_mode, want in ((None, 1, 1), ('sdcard\n', 1, 0), ('other\n', 1, 1),
+                                            (None, 0, 0), ('sdcard\n', 0, 0)):
+                (k / 'features').unlink(missing_ok=True)
+                if features is not None:
+                    (k / 'features').write_text(features)
+                r = self.sh(shell, f'. "{TOP}/tools/storage.sh"; SD_MODE={sd_mode}; sd_kernel_ok "{k}"; echo "rc=$?"')
+                self.assertEqual(f'rc={want}', r.stdout.strip(), (features, sd_mode))
+
+    def test_installer_refuses_a_card_install_with_a_kernel_that_cannot_read_it(self):
+        src = (TOP / 'install.sh').read_text()
+        unpack = src.index('tar -xzf "$REL/mu300-kernel-$KERNEL.tar.gz" -C "$KMAIN"')
+        check = src.index('sd_kernel_ok "$KMAIN" || die')
+        self.assertLess(unpack, check)
+        self.assertLess(check, src.index("say \"$(t 'Adding the vendor files from your device to the images')\""))
+
 class SdErase(ShellTest):
     """tools/storage.sh's sd_erase (uninstall.sh): the card is erased only when it holds mu300sd, never the eMMC.
 

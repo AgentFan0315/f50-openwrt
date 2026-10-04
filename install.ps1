@@ -445,6 +445,13 @@ function SdState([string]$Magic, [string]$Label) {
     if ($Label.Trim() -eq 'mu300sd') { return 'yes' }
     return 'foreign'
 }
+# A card installation needs a kernel that reads the card (tools/storage.sh's sd_kernel_ok): the mainline bundles
+# that do say so in ./features; older ones gate the SD host off and the device would never find its card.
+function SdKernelOk([int]$SdMode, [string]$Dir) {
+    if ($SdMode -ne 1) { return $true }
+    $f = Join-Path $Dir 'features'
+    return [bool]((Test-Path $f) -and (@(Get-Content $f) -contains 'sdcard'))
+}
 function SdExisting {
     $m = (SuDo "dd if=$SD_DEV bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1") -replace '\s', ''
     $l = (SuDo "dd if=$SD_DEV bs=1 skip=1144 count=16 2>/dev/null") -replace '\0', ''
@@ -744,6 +751,9 @@ if ($KERNEL -ne '5.4') {
     # a bundle names the devices it runs on; older mainline kernels do not bring up the U30 Air's USB (FINDINGS 33c)
     if ($DEVICE -ne 'f50' -and -not ((Test-Path "$KMAIN\devices") -and ((Get-Content "$KMAIN\devices") -match "\b$DEVICE\b"))) {
         Die (T 'release {1} does not support this device yet; use a newer one' $Release)
+    }
+    if (-not (SdKernelOk $SD_MODE $KMAIN)) {
+        Die (T 'the {1} kernel of release {2} cannot read the SD card: choose kernel 5.4, a newer release, or internal storage (MU300_STORAGE=internal)' $KERNEL $Release)
     }
 }
 
