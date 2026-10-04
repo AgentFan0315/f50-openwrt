@@ -78,5 +78,27 @@ Check 'sd root label'      (SdState '53ef' 'mu300root') 'foreign'
 Check 'sd not ext4'        (SdState '0000' 'mu300sd') 'no'
 Check 'sd unreadable'      (SdState '' '') 'no'
 
+# ---- uninstall.ps1: what is on the card, and the command that erases it -----------------------------------------
+$uast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Top "uninstall.ps1"), [ref]$null, [ref]$null)
+$udefs = $uast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and @('SdState', 'SdEraseCommand') -contains $n.Name }, $true)
+foreach ($d in $udefs) { . ([scriptblock]::Create($d.Extent.Text)) }
+Check 'uninstall sd mu300sd'    (SdState '53ef' 'mu300sd') 'yes'
+Check 'uninstall sd other'      (SdState '53ef' 'mu300root') 'foreign'
+Check 'uninstall sd not ext4'   (SdState '0000' 'mu300sd') 'no'
+foreach ($dev in '/dev/block/mmcblk0p1', '/dev/block/mmcblk0', '/dev/block/sda1', '/dev/block/mmcblk1p1 x', '') {
+    $threw = $false; try { SdEraseCommand $dev | Out-Null } catch { $threw = $true }
+    Check "erase refuses [$dev]" $threw $true
+}
+$cmd = SdEraseCommand '/dev/block/mmcblk1p1'
+Check 'erase command quotes'    ($cmd -match "[`"']") $false
+Check 'erase command target'    ($cmd -match ' of=/dev/block/mmcblk1p1 bs=1048576 count=64 ') $true
+# the same text tools/storage.sh's sd_erase_cmd builds (and tests/test_installer.py runs against stubs)
+if (Get-Command sh -CommandType Application -ErrorAction SilentlyContinue) {
+    foreach ($dev in '/dev/block/mmcblk1p1', '/dev/block/mmcblk1') {
+        $shCmd = (& sh -c ('unset MU300_SYSFS MU300_MOUNTS; . ./tools/storage.sh; sd_erase_cmd ' + $dev)) -join "`n"
+        Check "erase command = storage.sh ($dev)" (SdEraseCommand $dev) $shCmd
+    }
+}
+
 Write-Host "$script:passed passed, $script:failed failed"
 exit $script:failed

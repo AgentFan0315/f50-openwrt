@@ -150,5 +150,128 @@ class Storage(ShellTest):
             self.assertIn('DIE', self.run_choose(shell, card, label='', answer='sd'))   # unlabelled ext4 too
 
 
+class SdErase(ShellTest):
+    """tools/storage.sh's sd_erase (uninstall.sh): the card is erased only when it holds mu300sd, never the eMMC.
+
+    su_do runs the device commands here, with dd, sm and umount as stubs: dd reads the superblock from the files
+    label/magic and logs every write, sm lists the volumes in vols, umount drops the line from the mounts file."""
+
+    def setUp(self):
+        super().setUp()
+        t = self.tmp
+        self.stub('dd', 'case "$*" in\n'
+                  '  *of=*) echo "dd $*" >> "$STUBLOG/log"; [ -e "$STUBLOG/stuck" ] || rm -f "$STUBLOG/label" ;;\n'
+                  '  *skip=1080*) [ -e "$STUBLOG/label" ] && printf "\\123\\357" ;;\n'
+                  '  *skip=1144*) cat "$STUBLOG/label" 2>/dev/null ;;\n'
+                  'esac; true')
+        self.stub('sm', 'case $1 in list-volumes) cat "$STUBLOG/vols" ;; *) echo "sm $*" >> "$STUBLOG/log" ;; esac')
+        self.stub('umount', 'echo "umount $*" >> "$STUBLOG/log"; [ -e "$STUBLOG/stuck-mount" ] && exit 1\n'
+                  'grep -v " $1 " "$STUBLOG/mounts" > "$STUBLOG/m.new"; mv "$STUBLOG/m.new" "$STUBLOG/mounts"')
+        self.stub('sync', 'true')
+        (t / 'vols').write_text('private mounted null\npublic:179,1 mounted 1234-ABCD\npublic:8,1 mounted 55AA-1\n')
+        (t / 'mounts').write_text('/dev/block/mmcblk0p40 /data f2fs rw 0 0\n'
+                                  '/dev/block/mmcblk1p1 /data/local/tmp/mu300root ext4 rw 0 0\n')
+        (t / 'log').write_text('')
+        for disk in ('mmcblk0', 'mmcblk1'):
+            (t / 'sys' / 'block' / disk / 'device').mkdir(parents=True)
+        (t / 'sys/block/mmcblk0/device/type').write_text('MMC\n')
+        (t / 'sys/block/mmcblk1/device/type').write_text('SD\n')
+
+    def run_erase(self, shell, label='mu300sd', dev='/dev/block/mmcblk1', tail='sd_erase; echo SURVIVED'):
+        if label is not None:
+            (self.tmp / 'label').write_bytes(label.encode() + b'\0' * (16 - len(label)))
+        (self.tmp / 'sd').write_text(f'{dev} {62 * 2 ** 21} SD\n')
+        code = (f'TOP="{TOP}"; say() {{ :; }}; die() {{ echo "DIE $*"; exit 1; }}; '
+                'gib() { echo "$1"; }; t() { printf "%s" "$1"; }; '
+                'su_do() { case $1 in "for b in /sys/block/mmcblk"*) cat "$STUBLOG/sd" ;; *) sh -c "$1" ;; esac; }; '
+                f'MU300_SYSFS="{self.tmp}/sys"; MU300_MOUNTS="{self.tmp}/mounts"; '
+                '. "$TOP/tools/storage.sh"; sd_probe; ' + tail)
+        return self.sh(shell, code).stdout, (self.tmp / 'log').read_text()
+
+    def test_erases_the_mu300sd_card_after_releasing_it(self):
+        for shell in self.each_shell():
+            (self.tmp / 'mounts').write_text('/dev/block/mmcblk0p40 /data f2fs rw 0 0\n'
+                                             '/dev/block/mmcblk1p1 /data/local/tmp/mu300root ext4 rw 0 0\n')
+            (self.tmp / 'log').write_text('')
+            out, log = self.run_erase(shell, dev='/dev/block/mmcblk1p1')
+            self.assertIn('SURVIVED', out)
+            self.assertNotIn('DIE', out)
+            self.assertIn('sm unmount public:179,1\n', log)
+            self.assertNotIn('public:8,1', log)                     # a USB stick is not the card
+            self.assertIn('umount /data/local/tmp/mu300root\n', log)
+            self.assertNotIn('umount /data\n', log)                 # the eMMC's own mounts stay
+            self.assertIn('dd if=/dev/zero of=/dev/block/mmcblk1p1 bs=1048576 count=64 conv=notrunc', log)
+            self.assertEqual(log.count('dd '), 1)
+
+    def test_whole_card_without_a_partition_table(self):
+        for shell in self.each_shell():
+            out, log = self.run_erase(shell, dev='/dev/block/mmcblk1')
+            self.assertIn('SURVIVED', out)
+            self.assertIn('of=/dev/block/mmcblk1 ', log)
+
+    def test_never_a_card_without_mu300sd(self):
+        for shell in self.each_shell():
+            for label in (None, 'data', '', 'mu300root'):
+                (self.tmp / 'label').unlink(missing_ok=True)
+                (self.tmp / 'log').write_text('')
+                out, log = self.run_erase(shell, label=label)
+                self.assertIn('DIE', out, label)
+                self.assertNotIn('dd ', log, label)
+
+    def test_no_card(self):
+        for shell in self.each_shell():
+            (self.tmp / 'sd').write_text('')
+            out, log = self.run_erase(shell, tail='SD_DEV=; sd_erase; echo SURVIVED')
+            self.assertIn('DIE', out)
+            self.assertNotIn('dd ', log)
+
+    def test_never_the_emmc(self):
+        # mmcblk0 is the eMMC Android runs from, whatever its superblock says: refused on the host and, should a
+        # command for it ever be built, on the device too
+        for shell in self.each_shell():
+            for dev in ('/dev/block/mmcblk0p1', '/dev/block/mmcblk0', '/dev/block/sda1', '/dev/block/mmcblk1p1 x'):
+                (self.tmp / 'log').write_text('')
+                out, log = self.run_erase(shell, tail=f'SD_DEV="{dev}"; sd_erase; echo SURVIVED')
+                self.assertIn('DIE', out, dev)
+                self.assertNotIn('dd ', log, dev)
+            for dev in ('/dev/block/mmcblk0p1', '/dev/block/mmcblk0'):
+                out, log = self.run_erase(shell, tail=f'su_do "$(sd_erase_cmd {dev})"')
+                self.assertIn('REFUSED', out, dev)
+                self.assertNotIn('dd ', log, dev)
+
+    def test_device_side_checks(self):
+        for shell in self.each_shell():
+            # not an SD card in sysfs (a second eMMC, an SDIO function)
+            (self.tmp / 'sys/block/mmcblk1/device/type').write_text('MMC\n')
+            out, log = self.run_erase(shell, tail='su_do "$(sd_erase_cmd /dev/block/mmcblk1p1)"')
+            self.assertIn('REFUSED', out); self.assertNotIn('dd ', log)
+            (self.tmp / 'sys/block/mmcblk1/device/type').write_text('SD\n')
+            # the label changed between the host check and the erase
+            out, log = self.run_erase(shell, label='data', tail='su_do "$(sd_erase_cmd /dev/block/mmcblk1p1)"')
+            self.assertIn('REFUSED', out); self.assertNotIn('dd ', log)
+
+    def test_still_mounted_is_not_erased(self):
+        for shell in self.each_shell():
+            (self.tmp / 'stuck-mount').write_text('')
+            (self.tmp / 'mounts').write_text('/dev/block/mmcblk1p1 /data/local/tmp/mu300root ext4 rw 0 0\n')
+            out, log = self.run_erase(shell, dev='/dev/block/mmcblk1p1')
+            self.assertIn('DIE', out)
+            self.assertNotIn('dd ', log)
+
+    def test_a_filesystem_that_survives_the_erase_is_reported(self):
+        for shell in self.each_shell():
+            (self.tmp / 'stuck').write_text('')
+            out, _ = self.run_erase(shell)
+            self.assertIn('DIE', out)
+            self.assertIn('still', out)
+
+    def test_device_command_has_no_quotes(self):
+        # it travels inside su -c '...', and uninstall.ps1 sends the same text, where double quotes are lost
+        for shell in self.each_shell():
+            out, _ = self.run_erase(shell, tail='sd_erase_cmd /dev/block/mmcblk1p1')
+            self.assertTrue(out)
+            self.assertNotIn("'", out); self.assertNotIn('"', out)
+
+
 if __name__ == '__main__':
     unittest.main()

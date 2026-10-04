@@ -4,8 +4,9 @@
 
 .DESCRIPTION
     Run with the device booted in rooted Android and connected over USB (adb). It makes slot a (Android) the boot
-    slot in misc, copies boot_a over boot_b, erases the Linux filesystem in the unpartitioned eMMC region and removes
-    the installer leftovers. boot_a, the GPT, userdata and every other partition stay untouched.
+    slot in misc, copies boot_a over boot_b, erases the Linux filesystem in the unpartitioned eMMC region and, when you
+    say so, the one on the SD card (ext4 labelled mu300sd; a card with any other filesystem is never touched), and
+    removes the installer leftovers. boot_a, the GPT, userdata and every other partition stay untouched.
     Needs: adb and Python 3.
 #>
 [CmdletBinding()]
@@ -101,6 +102,35 @@ function Python { param([Parameter(ValueFromRemainingArguments = $true)][string[
     }
     & $script:PyExe @PyArgs
 }
+# What the card holds, from the ext4 magic and label of its superblock (install.ps1's SdState): yes for a mu300sd
+# filesystem, foreign for any other ext4, labelled or not, no for anything else. Only yes is ever erased.
+function SdState([string]$Magic, [string]$Label) {
+    if ($Magic -ne '53ef') { return 'no' }
+    if ($Label.Trim() -eq 'mu300sd') { return 'yes' }
+    return 'foreign'
+}
+function SdExisting {
+    $m = (SuDo "dd if=$SD_DEV bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1") -replace '\s', ''
+    $l = (SuDo "dd if=$SD_DEV bs=1 skip=1144 count=16 2>/dev/null") -replace '\0', ''
+    SdState $m $l
+}
+# The device command that erases the mu300sd filesystem on the card: the same text as tools/storage.sh's
+# sd_erase_cmd (tests/installer.Tests.ps1 compares them). The device checks again right before the write: never
+# mmcblk0, an SD card in sysfs, still labelled mu300sd; Android lets go of the card (vold mounts it as
+# /dev/block/vold/public:179,N), anything mounted from its own nodes is unmounted. Prints ERASED, else nothing is
+# written. Single quotes only around the parts with $ for the device (no double quotes reach it intact).
+function SdEraseCommand([string]$Dev) {
+    if ($Dev -match '^/dev/block/mmcblk0') { throw "refusing ${Dev}: that is the internal eMMC" }
+    if ($Dev -notmatch '^/dev/block/mmcblk[1-9](p[0-9]{1,2})?$') { throw "refusing ${Dev}: not an SD card device" }
+    $d = ($Dev -replace '^/dev/block/', '') -replace 'p[0-9]+$', ''
+    "case $Dev in */mmcblk0|*/mmcblk0p*) echo REFUSED $Dev is the eMMC; exit 1 ;; esac; " +
+    '[ x$(cat /sys/block/' + $d + '/device/type 2>/dev/null) = xSD ] || { echo REFUSED ' + $d + ' is not an SD card; exit 1; }; ' +
+    '[ x$(dd if=' + $Dev + ' bs=1 skip=1144 count=16 2>/dev/null | tr -d \\000) = xmu300sd ] || { echo REFUSED no mu300sd on ' + $Dev + '; exit 1; }; ' +
+    'for v in $(sm list-volumes 2>/dev/null | grep -o ^public:179,[0-9]*); do sm unmount $v >/dev/null 2>&1; done; ' +
+    'while read d m r; do case $d in /dev/block/' + $d + '|/dev/block/' + $d + 'p*) umount $m 2>/dev/null ;; esac; done < /proc/mounts; ' +
+    'grep -q ^/dev/block/' + $d + ' /proc/mounts && { echo BUSY; exit 1; }; ' +
+    'dd if=/dev/zero of=' + $Dev + ' bs=1048576 count=64 conv=notrunc 2>/dev/null; sync; echo ERASED'
+}
 function Hex32 { (SuDo 'dd if=/dev/block/by-name/misc bs=1 skip=2048 count=32 2>/dev/null | od -An -tx1') -replace '\s', '' }
 
 Say 'Checking host tools and device'
@@ -162,6 +192,16 @@ if ($OFF -gt 0) {
 } else {
     Write-Host 'no mu300root filesystem found (already erased?)'
 }
+# The SD card (tools/storage.sh's sd_probe): "<block device> <512-byte sectors> <type>" of the first mmc disk that
+# is not the eMMC - its first partition when it has one, the whole card otherwise; the type keeps a second eMMC or
+# an SDIO function out. Its installation is a filesystem of its own: only ext4 labelled mu300sd counts.
+$SD_DEV = ''; [int64]$SD_BYTES = 0; $SD_HAS = 'no'
+$sd = @((SuDo 'for b in /sys/block/mmcblk[1-9]; do [ -e $b/device/type ] || continue; n=${b##*/}; if [ -e $b/${n}p1 ]; then echo /dev/block/${n}p1 $(cat $b/${n}p1/size) $(cat $b/device/type); else echo /dev/block/$n $(cat $b/size) $(cat $b/device/type); fi; break; done').Trim() -split '\s+')
+if ($sd.Count -eq 3 -and $sd[2] -eq 'SD' -and $sd[1] -match '^[0-9]+$' -and [int64]$sd[1] * 512 -ge 700MB) {
+    $SD_DEV = $sd[0]; $SD_BYTES = [int64]$sd[1] * 512
+    $SD_HAS = SdExisting
+}
+if ($SD_HAS -eq 'yes') { Write-Host ('Linux filesystem on the SD card: {0}, {1:N1} GiB' -f $SD_DEV, ($SD_BYTES / 1GB)) }
 $BC = Hex32
 
 Say 'What should be removed?'
@@ -175,10 +215,23 @@ if ($OFF -gt 0) {
     if ($wipe -eq 'full') { $wipe = 'secure' }
     if ($wipe -notin @('secure', 'quick', 'keep')) { Die 'invalid choice' }
 }
+$sdwipe = 'keep'
+if ($SD_HAS -eq 'yes') {
+    Write-Host '  The SD card holds a Linux installation (ext4 labelled mu300sd):'
+    Write-Host '  erase   remove the filesystem from the card (its first 64 MiB are overwritten: fast, but the files'
+    Write-Host '          stay readable on the card until the space is reused)'
+    Write-Host '  keep    leave the card as it is (it does not boot once boot_b is restored)'
+    $sdwipe = Ask 'Linux filesystem on the SD card: erase / keep' 'erase'
+    if ($sdwipe -notin @('erase', 'keep')) { Die 'invalid choice' }
+}
 Write-Host ''
 Write-Host '  misc:     boot slot a (Android), Linux boot disabled'
 Write-Host '  boot_b:   replaced with a copy of boot_a (stock Android boot image)'
-Write-Host "  Linux:    $(if ($wipe -eq 'keep') { 'kept on the eMMC (not bootable)' } else { "$wipe erase of $([int64]($SIZE / 1MB)) MiB at offset $OFF" })"
+if ($OFF -eq 0) { Write-Host '  Linux:    no installation on the eMMC' }
+else { Write-Host "  Linux:    $(if ($wipe -eq 'keep') { 'kept on the eMMC (not bootable)' } else { "$wipe erase of $([int64]($SIZE / 1MB)) MiB at offset $OFF" })" }
+if ($sdwipe -eq 'erase') { Write-Host "  SD card:  mu300sd filesystem erased ($SD_DEV, first 64 MiB)" }
+elseif ($SD_HAS -eq 'yes') { Write-Host "  SD card:  kept ($SD_DEV, not bootable)" }
+else { Write-Host '  SD card:  no installation' }
 Write-Host '  untouched: boot_a, GPT, userdata and all other partitions'
 if ((Ask 'Type UNINSTALL to continue' 'no') -ne 'UNINSTALL') { Die 'cancelled' }
 
@@ -239,6 +292,28 @@ if ($wipe -ne 'keep') {
     } else {
         Write-Host 'erased (headers only)'
     }
+}
+
+if ($sdwipe -eq 'erase') {
+    Say 'Erasing the Linux filesystem on the SD card'
+    if ((SdExisting) -ne 'yes') { Die "the SD card ($SD_DEV) holds no mu300sd filesystem; nothing was erased" }
+    try { $cmd = SdEraseCommand $SD_DEV } catch { Die $_.Exception.Message }
+    $out = SuDo $cmd
+    if ($out -notmatch 'ERASED') { Die "the SD card was not erased: $out" }
+    if ((SdExisting) -ne 'no') { Die 'the SD card still shows a mu300sd filesystem' }
+    Write-Host "erased ($SD_DEV)"
+}
+# A kept internal installation may hold the marker of a card installation next to it (boot/init then waits for
+# the card). With the card's installation gone it would only make a later boot wait for nothing.
+if ($OFF -gt 0 -and $wipe -eq 'keep' -and ($sdwipe -eq 'erase' -or $SD_HAS -ne 'yes')) {
+    # LF line ends whatever the clone has (Android's sh stops at a CR)
+    $lf = [IO.Path]::GetTempFileName()
+    [IO.File]::WriteAllText($lf, ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'tools\android-mount-mu300root.sh')) -replace "`r`n", "`n"))
+    $dst = "$T/android-mount-mu300root.sh"
+    Quiet { adb push $lf $dst } | Out-Null
+    Remove-Item $lf -ErrorAction SilentlyContinue
+    $r = SuDo "MU300_OFF=$OFF MU300_SIZE=$SIZE sh $T/android-mount-mu300root.sh $T/mu300root >/dev/null && { rm -f $T/mu300root/.mu300/root-on-sd; sync; sh $T/android-mount-mu300root.sh -u $T/mu300root >/dev/null; echo CLEARED; }"
+    if ($r -notmatch 'CLEARED') { Write-Host 'note: could not open the kept Linux filesystem to clear its SD card marker (harmless: boot_b is Android)' }
 }
 
 # (no double quotes in a command for the device: Windows PowerShell 5.1 drops them on the way to adb)

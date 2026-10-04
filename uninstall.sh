@@ -9,6 +9,8 @@
 #   * copies boot_a to boot_b, so slot b holds a stock Android boot image instead of the Linux one,
 #   * erases the Linux filesystem in the unpartitioned eMMC region (secure: overwrite everything and verify;
 #     quick: only the filesystem headers, the data stays readable until the space is reused),
+#   * erases the Linux filesystem on the SD card (ext4 labelled mu300sd) when there is one and you say so: its
+#     first 64 MiB are overwritten, and a card with any other filesystem is never touched,
 #   * removes the installer leftovers in /data/local/tmp.
 # boot_a, the GPT, userdata and every other partition stay untouched. Needs adb and python3.
 set -eu
@@ -18,6 +20,10 @@ say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 ask() { printf '%s [%s]: ' "$2" "$3"; read -r _a; [ -n "$_a" ] || _a=$3; eval "$1=\$_a"; }
 su_do() { adb shell "su -c '$1'" </dev/null | tr -d '\r'; }
+# tools/storage.sh finds the SD card; this script is English only, so its messages need no translation
+t() { printf '%s' "$1"; }
+gib() { awk -v b="$1" 'BEGIN { printf "%.1f GiB", b / 1073741824 }'; }
+. "$TOP/tools/storage.sh"
 hex32() { su_do "dd if=/dev/block/by-name/misc bs=1 skip=2048 count=32 2>/dev/null | od -An -tx1 -v" | tr -d ' \n'; }
 
 say "Checking host tools and device"
@@ -52,6 +58,10 @@ if [ -n "$OFF" ]; then
 else
     echo "no mu300root filesystem found (already erased?)"
 fi
+# the card's installation is a filesystem of its own (sd_existing: yes only for ext4 labelled mu300sd)
+sd_probe; SD_HAS=no
+[ -n "$SD_DEV" ] && SD_HAS=$(sd_existing)
+[ "$SD_HAS" = yes ] && echo "Linux filesystem on the SD card: $SD_DEV, $(gib "$SD_BYTES")"
 BC=$(hex32)
 echo "boot control in misc: slot $(python3 -c 'import sys; print(bytes.fromhex(sys.argv[1][:4]).decode(errors="replace"))' "$BC")"
 
@@ -65,10 +75,30 @@ if [ -n "$OFF" ]; then
     ask wipe "Erase the Linux filesystem: secure / quick / keep" secure
     case $wipe in secure|quick|keep) ;; full) wipe=secure ;; *) die "invalid choice" ;; esac
 fi
+sdwipe=keep
+if [ "$SD_HAS" = yes ]; then
+    echo "  The SD card holds a Linux installation (ext4 labelled mu300sd):"
+    echo "  erase   remove the filesystem from the card (its first 64 MiB are overwritten: fast, but the files"
+    echo "          stay readable on the card until the space is reused)"
+    echo "  keep    leave the card as it is (it does not boot once boot_b is restored)"
+    ask sdwipe "Linux filesystem on the SD card: erase / keep" erase
+    case $sdwipe in erase|keep) ;; *) die "invalid choice" ;; esac
+fi
 echo
 echo "  misc:     boot slot a (Android), Linux boot disabled"
 echo "  boot_b:   replaced with a copy of boot_a (stock Android boot image)"
-echo "  Linux:    $([ $wipe = keep ] && echo "kept on the eMMC (not bootable)" || echo "$wipe erase of $((SIZE / 1048576)) MiB at offset $OFF")"
+if [ -z "$OFF" ]; then
+    echo "  Linux:    no installation on the eMMC"
+else
+    echo "  Linux:    $([ $wipe = keep ] && echo "kept on the eMMC (not bootable)" || echo "$wipe erase of $((SIZE / 1048576)) MiB at offset $OFF")"
+fi
+if [ $sdwipe = erase ]; then
+    echo "  SD card:  mu300sd filesystem erased ($SD_DEV, first 64 MiB)"
+elif [ "$SD_HAS" = yes ]; then
+    echo "  SD card:  kept ($SD_DEV, not bootable)"
+else
+    echo "  SD card:  no installation"
+fi
 echo "  untouched: boot_a, GPT, userdata and all other partitions"
 ask confirm "Type UNINSTALL to continue" no
 [ "$confirm" = UNINSTALL ] || die "cancelled"
@@ -134,6 +164,20 @@ if [ $wipe != keep ]; then
     else
         echo "erased (headers only)"
     fi
+fi
+
+if [ $sdwipe = erase ]; then
+    say "Erasing the Linux filesystem on the SD card"
+    # sd_erase checks the card again on the device (never mmcblk0, an SD card, still mu300sd) before it writes
+    sd_erase
+    echo "erased ($SD_DEV)"
+fi
+# A kept internal installation may hold the marker of a card installation next to it (boot/init then waits for
+# the card). With the card's installation gone it would only make a later boot wait for nothing.
+if [ -n "$OFF" ] && [ $wipe = keep ] && { [ $sdwipe = erase ] || [ "$SD_HAS" != yes ]; }; then
+    adb push "$TOP/tools/android-mount-mu300root.sh" $T/ </dev/null >/dev/null
+    r=$(su_do "MU300_OFF=$OFF MU300_SIZE=$SIZE sh $T/android-mount-mu300root.sh $T/mu300root >/dev/null && { rm -f $T/mu300root/.mu300/root-on-sd; sync; sh $T/android-mount-mu300root.sh -u $T/mu300root >/dev/null; echo CLEARED; }" 2>/dev/null) || true
+    case $r in *CLEARED*) ;; *) echo "note: could not open the kept Linux filesystem to clear its SD card marker (harmless: boot_b is Android)" ;; esac
 fi
 
 # never delete through a still mounted Linux filesystem

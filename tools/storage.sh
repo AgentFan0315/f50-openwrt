@@ -1,8 +1,9 @@
-# Where the Linux filesystem goes: the free eMMC region or the SD card. Sourced by install.sh and uninstall.sh
-# (su_do, ask, t, die and gib are theirs).
+# Where the Linux filesystem goes: the free eMMC region or the SD card. Sourced by install.sh, uninstall.sh and
+# tools/reset-password.sh (su_do, ask, t, die and gib are theirs).
 #   sd_probe         SD_DEV / SD_BYTES of the card in the slot (empty without one), SD_SMALL=1 when it is too small
 #   sd_existing      yes when the card already holds a mu300sd filesystem, foreign for any other ext4, else no
 #   choose_storage   SD_MODE=0|1; MU300_STORAGE=internal|sd answers without asking
+#   sd_erase         uninstall.sh: overwrite the start of the card's mu300sd filesystem (nothing else, ever)
 
 SD_MIN=$((700 * 1024 * 1024))
 
@@ -50,4 +51,38 @@ sd_not_foreign() {
     [ "$(sd_existing)" = foreign ] || return 0
     die "$(t 'the SD card ({1}) holds another Linux (ext4) filesystem, and the installer never formats one that is not its own (mu300sd).' "$SD_DEV")
 $(t 'Copy off what you need and format the card elsewhere, use another card, or install to internal storage (MU300_STORAGE=internal).')"
+}
+
+# The device command that erases the mu300sd filesystem on DEV (uninstall.ps1 sends the same text, so no quotes of
+# either kind). The host has checked all of this already; the device checks it again right before the write, so a
+# wrong DEV can never reach the eMMC: not mmcblk0, an SD card in sysfs, still labelled mu300sd. Android lets go of
+# the card first (vold mounts it as /dev/block/vold/public:179,N, which no grep for the card's name finds), then
+# anything mounted from the card's own nodes is unmounted. Prints ERASED, or REFUSED/BUSY and writes nothing.
+# The first 64 MiB hold the superblock, the group descriptors and the first inode tables: mount and blkid see no
+# filesystem afterwards, and the rest of the card is free space for whatever the user formats it with.
+sd_erase_cmd() {  # sd_erase_cmd DEV  (/dev/block/mmcblk1p1, or /dev/block/mmcblk1 for a card without partitions)
+    _d=${1#/dev/block/}; _d=${_d%p[0-9]*}
+    _s=${MU300_SYSFS:-/sys}; _m=${MU300_MOUNTS:-/proc/mounts}
+    printf '%s' "case $1 in */mmcblk0|*/mmcblk0p*) echo REFUSED $1 is the eMMC; exit 1 ;; esac; " \
+        "[ x\$(cat $_s/block/$_d/device/type 2>/dev/null) = xSD ] || { echo REFUSED $_d is not an SD card; exit 1; }; " \
+        "[ x\$(dd if=$1 bs=1 skip=1144 count=16 2>/dev/null | tr -d \\\\000) = xmu300sd ] || { echo REFUSED no mu300sd on $1; exit 1; }; " \
+        "for v in \$(sm list-volumes 2>/dev/null | grep -o ^public:179,[0-9]*); do sm unmount \$v >/dev/null 2>&1; done; " \
+        "while read d m r; do case \$d in /dev/block/$_d|/dev/block/${_d}p*) umount \$m 2>/dev/null ;; esac; done < $_m; " \
+        "grep -q ^/dev/block/$_d $_m && { echo BUSY; exit 1; }; " \
+        "dd if=/dev/zero of=$1 bs=1048576 count=64 conv=notrunc 2>/dev/null; sync; echo ERASED"
+}
+
+# Only SD_DEV as sd_probe found it, and only while it holds mu300sd: any other ext4 on a card is someone's data.
+# uninstall.sh asks no translated questions, so these messages stay English.
+sd_erase() {
+    [ -n "$SD_DEV" ] || die "no SD card to erase"
+    case $SD_DEV in
+        /dev/block/mmcblk0|/dev/block/mmcblk0p*) die "refusing $SD_DEV: that is the internal eMMC" ;;
+        /dev/block/mmcblk[1-9]|/dev/block/mmcblk[1-9]p[0-9]|/dev/block/mmcblk[1-9]p[0-9][0-9]) ;;
+        *) die "refusing $SD_DEV: not an SD card device" ;;
+    esac
+    [ "$(sd_existing)" = yes ] || die "the SD card ($SD_DEV) holds no mu300sd filesystem; nothing was erased"
+    _o=$(su_do "$(sd_erase_cmd "$SD_DEV")")
+    case $_o in *ERASED*) ;; *) die "the SD card was not erased: $_o" ;; esac
+    [ "$(sd_existing)" = no ] || die "the SD card still shows a mu300sd filesystem"
 }
