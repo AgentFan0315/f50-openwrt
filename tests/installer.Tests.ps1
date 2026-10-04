@@ -13,7 +13,7 @@ function Check($name, $got, $want) {
 
 # the functions under test, straight from install.ps1
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Top "install.ps1"), [ref]$null, [ref]$null)
-$want = 'LoadLanguage', 'T', 'NormalizeAnswer', 'Gib', 'ChooseStorage', 'SdState'
+$want = 'LoadLanguage', 'T', 'NormalizeAnswer', 'Gib', 'ChooseStorage', 'SdState', 'ChooseOpenWrt'
 $defs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $true)
 foreach ($d in $defs) { . ([scriptblock]::Create($d.Extent.Text)) }
 foreach ($w in 'LoadLanguage', 'T', 'NormalizeAnswer') {
@@ -69,6 +69,22 @@ $threw = $false; try { ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB '' 'usb' |
 Check 'invalid answer'     $threw $true
 $threw = $false; try { ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB 'usb' '' | Out-Null } catch { $threw = $true }
 Check 'invalid forced'     $threw $true
+
+# ---- ChooseOpenWrt: plain OpenWrt or with the MU300 control panel (install.sh's choose_systems) --------------------
+Check 'owrt 3 + 2'         ((ChooseOpenWrt @('ubuntu', 'openwrt') '' '2') -join ' ') 'ubuntu openwrt-luci'
+Check 'owrt 2 + 1'         ((ChooseOpenWrt @('openwrt') '' '1') -join ' ') 'openwrt'
+Check 'owrt default'       ((ChooseOpenWrt @('openwrt') '' '') -join ' ') 'openwrt'
+Check 'owrt preset luci'   ((ChooseOpenWrt @('openwrt') 'luci' '') -join ' ') 'openwrt-luci'
+Check 'owrt preset plain'  ((ChooseOpenWrt @('ubuntu', 'openwrt') 'plain' '2') -join ' ') 'ubuntu openwrt'
+Check 'owrt one element'   (@(ChooseOpenWrt @('openwrt') 'luci' '').Count) 1
+$threw = $false; try { ChooseOpenWrt @('openwrt') 'x' '' | Out-Null } catch { $threw = $true }
+Check 'owrt bad preset'    $threw $true
+$threw = $false; try { ChooseOpenWrt @('openwrt') '' '7' | Out-Null } catch { $threw = $true }
+Check 'owrt bad answer'    $threw $true
+# the boot question accepts the names that were chosen: 'openwrt' is not one of them after the second answer
+$o = ChooseOpenWrt @('ubuntu', 'openwrt') '' '2'
+Check 'boot openwrt-luci ok'  ('openwrt-luci' -in $o) $true
+Check 'boot openwrt refused'  ('openwrt' -in $o) $false
 
 # ---- SdState: what is on the card already (ext4 magic at 1080, label at 1144) -------------------------------------
 Check 'sd mu300sd'         (SdState '53ef' 'mu300sd') 'yes'
