@@ -13,7 +13,7 @@ function Check($name, $got, $want) {
 
 # the functions under test, straight from install.ps1
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Top "install.ps1"), [ref]$null, [ref]$null)
-$want = 'LoadLanguage', 'T', 'NormalizeAnswer', 'Gib'
+$want = 'LoadLanguage', 'T', 'NormalizeAnswer', 'Gib', 'ChooseStorage', 'SdState'
 $defs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $true)
 foreach ($d in $defs) { . ([scriptblock]::Create($d.Extent.Text)) }
 foreach ($w in 'LoadLanguage', 'T', 'NormalizeAnswer') {
@@ -55,6 +55,28 @@ foreach ($k in $cases.Keys) { Check "NormalizeAnswer $k" (NormalizeAnswer $k) $c
 if (Get-Command Gib -ErrorAction SilentlyContinue) {
     Check 'Gib' ((Gib 34828075008) -replace ',', '.') '32.4 GiB'
 }
+
+# ---- ChooseStorage: internal region or SD card -------------------------------------------------------------------
+Check 'no card'            (ChooseStorage '' 0 30GB '' '') 'internal'
+Check 'card, default'      (ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB '' '') 'internal'
+Check 'card, answer sd'    (ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB '' 'sd') 'sd'
+Check 'small internal'     (ChooseStorage '/dev/block/mmcblk1p1' 62GB 100MB '' '') 'sd'
+Check 'forced internal'    (ChooseStorage '/dev/block/mmcblk1p1' 62GB 100MB 'internal' '') 'internal'
+Check 'forced sd'          (ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB 'sd' '') 'sd'
+$threw = $false; try { ChooseStorage '' 0 30GB 'sd' '' | Out-Null } catch { $threw = $true }
+Check 'forced sd, no card' $threw $true
+$threw = $false; try { ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB '' 'usb' | Out-Null } catch { $threw = $true }
+Check 'invalid answer'     $threw $true
+$threw = $false; try { ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB 'usb' '' | Out-Null } catch { $threw = $true }
+Check 'invalid forced'     $threw $true
+
+# ---- SdState: what is on the card already (ext4 magic at 1080, label at 1144) -------------------------------------
+Check 'sd mu300sd'         (SdState '53ef' 'mu300sd') 'yes'
+Check 'sd other label'     (SdState '53ef' 'data') 'foreign'
+Check 'sd no label'        (SdState '53ef' '') 'foreign'
+Check 'sd root label'      (SdState '53ef' 'mu300root') 'foreign'
+Check 'sd not ext4'        (SdState '0000' 'mu300sd') 'no'
+Check 'sd unreadable'      (SdState '' '') 'no'
 
 Write-Host "$script:passed passed, $script:failed failed"
 exit $script:failed
