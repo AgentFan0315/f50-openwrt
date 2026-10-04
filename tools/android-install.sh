@@ -22,8 +22,11 @@ T=/data/local/tmp
 M=$T/mu300root
 say() { echo "[device] $*"; }
 # --- sd begin
-sd_label() {  # the ext4 label of a device, empty when it is not ext4
-    [ "$(dd if="$1" bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')" = 53ef ] || return 0
+sd_ext4() {  # true when the device holds an ext4 filesystem, labelled or not
+    [ "$(dd if="$1" bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')" = 53ef ]
+}
+sd_label() {  # the ext4 label of a device, empty when it is not ext4 or has none
+    sd_ext4 "$1" || return 0
     dd if="$1" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\000'
 }
 sd_disk() {  # sd_disk DEV: the disk of a partition (mmcblk1p1 -> mmcblk1); a whole disk stays as it is
@@ -66,7 +69,10 @@ sd_release() {  # sd_release DEV: make Android let go of the card; nothing has b
 sd_prepare() {  # sd_prepare DEV FORMAT: create mu300sd, or check that it is there
     label=$(sd_label "$1")
     if [ "$2" = 1 ]; then
-        [ -z "$label" ] || [ "$label" = mu300sd ] || { say "refusing to format: foreign ext4 ($label) on the SD card"; return 1; }
+        # any other ext4, with or without a label, is someone's Linux data; FAT, exFAT or a blank card is not
+        if sd_ext4 "$1" && [ "$label" != mu300sd ]; then
+            say "refusing to format: foreign ext4 (${label:-no label}) on the SD card"; return 1
+        fi
         say "creating ext4 mu300sd on $1"
         mke2fs -t ext4 -L mu300sd -F "$1" >/dev/null
     elif [ "$label" != mu300sd ]; then

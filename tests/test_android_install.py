@@ -49,6 +49,23 @@ class SdCard(ShellTest):
             self.assertIn('photos', out)
             self.assertNotIn('mke2fs', calls)
 
+    def test_unlabelled_ext4_is_refused(self):
+        # an ext4 without a label is still someone's Linux data
+        fake_ext4(self.dev, '')
+        for shell in self.each_shell():
+            out, calls = self.run_fn(shell, f'sd_prepare {self.dev} 1')
+            self.assertIn('rc=1\n', out)
+            self.assertIn('refusing to format', out)
+            self.assertNotIn('mke2fs', calls)
+
+    def test_non_ext4_card_is_formatted(self):
+        # a FAT/exFAT card (magic bytes not 53ef): formatted after ERASE on the host
+        fake_ext4(self.dev, 'NO NAME', magic=b'\x00\x00')
+        for shell in self.each_shell():
+            out, calls = self.run_fn(shell, f'sd_prepare {self.dev} 1')
+            self.assertIn('rc=0\n', out)
+            self.assertIn('mke2fs', calls)
+
     def test_existing_installation_is_kept_or_replaced(self):
         fake_ext4(self.dev, 'mu300sd')
         for shell in self.each_shell():

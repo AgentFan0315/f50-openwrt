@@ -132,7 +132,7 @@ class Storage(ShellTest):
     def test_sd_existing(self):
         card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
         for shell in self.each_shell():
-            for label, want in ((None, 'no'), ('mu300sd', 'yes'), ('data', 'foreign'), ('', 'no')):
+            for label, want in ((None, 'no'), ('mu300sd', 'yes'), ('data', 'foreign'), ('', 'foreign')):
                 (self.tmp / 'label').unlink(missing_ok=True)
                 out = self.run_choose(shell, card, label=label, tail='echo "existing=$(sd_existing)"; SD_MODE=; ')
                 self.assertIn('existing=%s\n' % want, out)
@@ -147,6 +147,7 @@ class Storage(ShellTest):
                 self.assertIn('MU300_STORAGE=internal', out)
             self.assertIn('mode=0', self.run_choose(shell, card, label='data'))        # internal stays possible
             self.assertIn('mode=1', self.run_choose(shell, card, label='mu300sd', answer='sd'))
+            self.assertIn('DIE', self.run_choose(shell, card, label='', answer='sd'))   # unlabelled ext4 too
 
 
 if __name__ == '__main__':

@@ -1,7 +1,7 @@
 # Where the Linux filesystem goes: the free eMMC region or the SD card. Sourced by install.sh and uninstall.sh
 # (su_do, ask, t, die and gib are theirs).
 #   sd_probe         SD_DEV / SD_BYTES of the card in the slot (empty without one), SD_SMALL=1 when it is too small
-#   sd_existing      yes when the card already holds a mu300sd filesystem, foreign for another labelled ext4, else no
+#   sd_existing      yes when the card already holds a mu300sd filesystem, foreign for any other ext4, else no
 #   choose_storage   SD_MODE=0|1; MU300_STORAGE=internal|sd answers without asking
 
 SD_MIN=$((700 * 1024 * 1024))
@@ -20,8 +20,8 @@ sd_probe() {
 sd_existing() {
     m=$(su_do "dd if=$SD_DEV bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1" | tr -d ' ')
     l=$(su_do "dd if=$SD_DEV bs=1 skip=1144 count=16 2>/dev/null" | tr -d '\000')
-    # an ext4 without a label counts as empty, as android-install.sh's sd_prepare treats it
-    if [ "$m" != 53ef ] || [ -z "$l" ]; then echo no; elif [ "$l" = mu300sd ]; then echo yes; else echo foreign; fi
+    # any other ext4, labelled or not, is foreign: android-install.sh's sd_prepare refuses to format it
+    if [ "$m" != 53ef ]; then echo no; elif [ "$l" = mu300sd ]; then echo yes; else echo foreign; fi
 }
 
 choose_storage() {
