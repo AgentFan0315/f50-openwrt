@@ -58,5 +58,74 @@ class SelectDevice(ShellTest):
             self.assertIn('rc=1 serial=none', out)
 
 
+class Storage(ShellTest):
+    """tools/storage.sh: internal region or SD card."""
+    GIB = 1024 ** 3
+
+    def run_choose(self, shell, card, internal=30 * GIB, answer='', forced=''):
+        # card: None, or (device, sectors, has_partition, type)
+        (self.tmp / 'sd').write_text('' if card is None else '%s %s %s\n' % (
+            card[0] + ('p1' if card[2] else ''), card[1], card[3]))
+        code = (f'TOP="{TOP}"; . "$TOP/tools/i18n.sh"; MU300_LANG=en; '
+                'say() { :; }; die() { echo "DIE $*"; exit 1; }; '
+                'gib() { echo "$1"; }; '
+                'ask() { printf "ASKED[%s] " "$3"; read -r _a; [ -n "$_a" ] || _a=$3; eval "$1=\\$_a"; }; '
+                f'su_do() {{ cat "{self.tmp}/sd"; }}; SIZE={internal}; '
+                f'{"MU300_STORAGE=" + forced + "; " if forced else "unset MU300_STORAGE; "}'
+                '. "$TOP/tools/storage.sh"; sd_probe; choose_storage; '
+                'echo "mode=$SD_MODE dev=${SD_DEV:-none}"')
+        return self.sh(shell, code, stdin=answer + '\n').stdout
+
+    def test_no_card_never_asks(self):
+        for shell in self.each_shell():
+            out = self.run_choose(shell, None)
+            self.assertNotIn('ASKED', out)
+            self.assertIn('mode=0 dev=none', out)
+
+    def test_card_asks_with_internal_as_default(self):
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
+        for shell in self.each_shell():
+            out = self.run_choose(shell, card)
+            self.assertIn('ASKED[internal]', out)
+            self.assertIn('mode=0', out)
+            out = self.run_choose(shell, card, answer='sd')
+            self.assertIn('mode=1 dev=/dev/block/mmcblk1p1', out)
+
+    def test_small_internal_space_makes_the_card_the_default(self):
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, False, 'SD')
+        for shell in self.each_shell():
+            out = self.run_choose(shell, card, internal=100 * 1024 ** 2)
+            self.assertIn('ASKED[sd]', out)
+            self.assertIn('mode=1 dev=/dev/block/mmcblk1', out)
+
+    def test_forced(self):
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
+        for shell in self.each_shell():
+            self.assertIn('mode=1', self.run_choose(shell, card, forced='sd'))
+            out = self.run_choose(shell, card, forced='internal')
+            self.assertNotIn('ASKED', out); self.assertIn('mode=0', out)
+
+    def test_forced_sd_without_card_dies(self):
+        for shell in self.each_shell():
+            self.assertIn('DIE', self.run_choose(shell, None, forced='sd'))
+
+    def test_small_first_partition_is_too_small(self):
+        # 64 MiB first partition in front of a big card: too small, not a reason to take the whole device
+        card = ('/dev/block/mmcblk1', 64 * 2048, True, 'SD')
+        for shell in self.each_shell():
+            out = self.run_choose(shell, card)
+            self.assertNotIn('ASKED', out)
+            self.assertIn('mode=0', out)
+
+    def test_not_an_sd_card(self):
+        for shell in self.each_shell():
+            self.assertIn('mode=0 dev=none', self.run_choose(shell, ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'MMC')))
+
+    def test_invalid_answer(self):
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
+        for shell in self.each_shell():
+            self.assertIn('DIE', self.run_choose(shell, card, answer='usb'))
+
+
 if __name__ == '__main__':
     unittest.main()

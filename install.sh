@@ -37,6 +37,7 @@ for a in "$@"; do
     esac
 done
 . "$TOP/tools/i18n.sh"
+. "$TOP/tools/storage.sh"
 choose_language
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\n%s %s\n' "$(t 'ERROR:' 2>/dev/null || echo ERROR:)" "$*" >&2; exit 1; }
@@ -248,12 +249,21 @@ gib() { awk -v b="$1" 'BEGIN { printf "%.1f GiB", b / 1073741824 }'; }
 # keeps the previous one as <os>.old while the new one is unpacked, so allow for two of each plus working room.
 NEED_OPENWRT=$((800 * 1024 * 1024)); NEED_UBUNTU=$((1600 * 1024 * 1024)); NEED_BOTH=$((2400 * 1024 * 1024))
 echo "$(t 'eMMC: {1} ({2} sectors), partitions end at {3} (sector {4}), free after them: {5}' "$(gib $((disk * 512)))" "$disk" "$(gib $((last_end * 512)))" "$last_end" "$(gib $SIZE)")"
+# the SD card as the other place for it (boot/init looks there first)
+sd_probe
+[ "$SD_SMALL" = 1 ] && echo "$(t 'SD card present but smaller than 700 MiB; not used')"
+if [ $CHECK_ONLY = 1 ]; then
+    SD_MODE=0
+    [ -n "$SD_DEV" ] && echo "$(t 'SD card: {1}, {2}, existing mu300sd filesystem: {3}' "$SD_DEV" "$(gib "$SD_BYTES")" "$(t "$(sd_existing)")")"
+else
+    choose_storage
+fi
 # Smaller eMMC variants leave less room behind userdata, and how much is needed depends on the choice further
 # down - OpenWrt alone fits in a few hundred megabytes. So refuse only what cannot hold anything at all, and
 # check the real requirement once the systems are known. There is nowhere else to put this region on these
 # devices: userdata is metadata-encrypted (dm-default-key), so an image file inside it cannot be read from
 # Linux, and the spare-looking blackbox and fulldumpdb partitions are written by the firmware itself.
-if [ $SIZE -lt $((700 * 1024 * 1024)) ]; then
+if [ $SD_MODE = 0 ] && [ $SIZE -lt $((700 * 1024 * 1024)) ]; then
     offer_repartition   # exits, either by installing nothing or by rebooting for a second pass
 fi
 # an existing installation defines the region (it may have been created with a slightly different size)
@@ -267,11 +277,17 @@ for cand in $OFF 27762098176; do
     fi
 done
 echo "$(t 'Linux region: offset {1}, {2}, existing mu300root filesystem: {3}' "$OFF" "$(gib $SIZE)" "$(t "$existing")")"
+INTERNAL_EXISTS=0; [ $existing = yes ] && INTERNAL_EXISTS=1; INT_SIZE=
+if [ $SD_MODE = 1 ]; then
+    # from here on SIZE and existing describe the card; OFF and INT_SIZE keep the internal region for the marker
+    INT_SIZE=$SIZE; SIZE=$SD_BYTES; existing=$(sd_existing); DIRTY=0
+    echo "$(t 'Linux filesystem: SD card {1}, {2}, existing mu300sd filesystem: {3}' "$SD_DEV" "$(gib $SIZE)" "$(t "$existing")")"
+fi
 # unpartitioned space should be unused: sample 16 x 1 MiB across the region and count those with data. Empty is
 # 0x00 or 0xFF: an eMMC reads back what its erase leaves (EXT_CSD ERASED_MEM_CONT), and on some F50s that is 0xFF -
 # counted as data, a region that was never written stopped the install with "not empty".
 DIRTY=0
-if [ $existing = no ]; then
+if [ $SD_MODE = 0 ] && [ $existing = no ]; then
     step=$(( SIZE / 1048576 / 16 ))
     probe=""; i=0
     while [ $i -lt 16 ]; do probe="$probe $(( OFF / 1048576 + i * step ))"; i=$((i + 1)); done
@@ -282,6 +298,8 @@ if [ $existing = no ]; then
 fi
 if [ $existing = yes ]; then
     verdict=$(t 'OK: a MU300 Linux installation is already present (it can be kept or replaced)')
+elif [ $SD_MODE = 1 ]; then
+    verdict=$(t 'OK: the SD card will be formatted; everything on it is erased')
 elif [ "$DIRTY" -gt 0 ]; then
     verdict=$(t 'WARNING: the unpartitioned space is not empty; it may be used by this firmware. Installing overwrites it')
 elif [ $SIZE -ge $((20 * 1024 * 1024 * 1024)) ]; then
@@ -389,6 +407,10 @@ else
     esac
     # a new /ubuntu replaces an Ubuntu installed directly in the filesystem root (first-generation layout)
     case " $OSES " in *" ubuntu "*) [ $FORMAT = 0 ] && WIPE_LEGACY=1 ;; esac
+fi
+if [ $SD_MODE = 1 ] && [ $FORMAT = 1 ]; then
+    ask erase "$(t 'Everything on the SD card ({1}, {2}) will be erased. Type ERASE to continue' "$SD_DEV" "$(gib $SIZE)")" no
+    [ "$erase" = ERASE ] || die "$(t 'cancelled')"
 fi
 printf '%s: ' "$(t 'Password for the "ubuntu" user (Ubuntu) and "root" (OpenWrt)')"
 [ -t 0 ] && stty -echo; read -r pw1; printf '\n%s: ' "$(t 'Repeat')"; read -r pw2; [ -t 0 ] && stty echo; echo
@@ -542,10 +564,14 @@ echo "  $(t 'source:         {1}' "$([ $MODE = prebuilt ] && t 'prebuilt release
 echo "  $(t 'systems:        {1} (boots: {2})' "$OSES$(case " $OSES " in (*" ubuntu "*) echo " (Ubuntu $UBUNTU)" ;; esac)" "$BOOT_OS")"
 echo "  $(t 'kernel:         {1}' "$KERNEL$([ -n "$KMAIN" ] && echo " (mainline, $(cat "$KMAIN/kernel.release"))")")"
 echo "  $(t 'default boot:   {1}' "$([ $DEFAULT_LINUX = 1 ] && t 'Linux (Android after {1} failed boots in a row)' "$BOOT_ATTEMPTS" || t 'Android, Linux on demand')")"
-echo "  $(t 'filesystem:     {1}' "$([ $FORMAT = 1 ] && t 'CREATE new ext4 (erases the Linux region)' || t 'keep existing')")"
+echo "  $(t 'filesystem:     {1}' "$([ $FORMAT = 0 ] && t 'keep existing' || { [ $SD_MODE = 1 ] && t 'CREATE new ext4 (erases the SD card)' || t 'CREATE new ext4 (erases the Linux region)'; })")"
 [ $UPDATE = 1 ] && echo "  $(t 'update:         settings and user data of the chosen systems are kept, everything else is replaced')"
 [ $UPDATE = 0 ] && [ $FORMAT = 0 ] && echo "  $(t 'note:           the chosen systems are installed fresh; their previous files and settings are replaced')"
-echo "  $(t 'writes:         Linux region at offset {1}, boot_b, 32 bytes of misc (boot_a, GPT and userdata are not touched)' "$OFF")"
+if [ $SD_MODE = 1 ]; then
+    echo "  $(t 'writes:         SD card {1}, boot_b, 32 bytes of misc (the eMMC region, boot_a, GPT and userdata are not touched)' "$SD_DEV")"
+else
+    echo "  $(t 'writes:         Linux region at offset {1}, boot_b, 32 bytes of misc (boot_a, GPT and userdata are not touched)' "$OFF")"
+fi
 ask confirm "$(t 'Type INSTALL to continue')" no
 [ "$confirm" = INSTALL ] || die "$(t 'cancelled')"
 
@@ -560,8 +586,8 @@ for os in $OSES; do
     fi
 done
 env=$(mktemp)
-printf 'OFF=%s\nSIZE=%s\nOFF_S=%s\nSIZE_S=%s\nFORMAT=%s\nOSES="%s"\nWIPE_LEGACY=%s\nUPDATE=%s\nBOOT_OS=%s\nDEFAULT_LINUX=%s\nBOOT_ATTEMPTS=%s\nIMPORT_HOTSPOT=%s\nKERNEL=%s\nPWHASH='"'"'%s'"'"'\n' \
-  "$OFF" "$SIZE" "$((OFF / 512))" "$((SIZE / 512))" "$FORMAT" "$OSES" "$WIPE_LEGACY" "$UPDATE" "$BOOT_OS" "$DEFAULT_LINUX" "$BOOT_ATTEMPTS" "$IMPORT_HOTSPOT" "$KERNEL" "$PWHASH" > "$env"
+printf 'OFF=%s\nSIZE=%s\nOFF_S=%s\nSIZE_S=%s\nFORMAT=%s\nOSES="%s"\nWIPE_LEGACY=%s\nUPDATE=%s\nBOOT_OS=%s\nDEFAULT_LINUX=%s\nBOOT_ATTEMPTS=%s\nIMPORT_HOTSPOT=%s\nKERNEL=%s\nSD_MODE=%s\nSD_DEV=%s\nINTERNAL_EXISTS=%s\nPWHASH='"'"'%s'"'"'\n' \
+  "$OFF" "${INT_SIZE:-$SIZE}" "$((OFF / 512))" "$((${INT_SIZE:-$SIZE} / 512))" "$FORMAT" "$OSES" "$WIPE_LEGACY" "$UPDATE" "$BOOT_OS" "$DEFAULT_LINUX" "$BOOT_ATTEMPTS" "$IMPORT_HOTSPOT" "$KERNEL" "$SD_MODE" "$SD_DEV" "$INTERNAL_EXISTS" "$PWHASH" > "$env"
 adb push "$env" $T/mu300-install.env >/dev/null; rm -f "$env"
 su_do "sh $T/android-install.sh" | tee "$WORK/device-install.log"
 grep -q MU300-INSTALL-OK "$WORK/device-install.log" || die "$(t 'installation on the device failed; boot_b and misc were not changed')"
