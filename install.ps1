@@ -592,7 +592,7 @@ if ($OSES -contains 'openwrt') {
         Write-Host ('  ' + (T '2) OpenWrt {1} with the MU300 control panel: dashboard, cellular locks, SMS, AT terminal, USB modes (by kanoqwq)' '25.12.5'))
         $owAnswer = Ask (T 'Choice') '1'
     }
-    try { $OSES = ChooseOpenWrt $OSES $owPreset $owAnswer } catch { Die (T 'invalid choice') }
+    try { $OSES = @(ChooseOpenWrt $OSES $owPreset $owAnswer) } catch { Die (T 'invalid choice') }
 }
 $need = if ($OSES.Count -eq 2) { $NEED_BOTH } elseif ($OSES[0] -eq 'ubuntu') { $NEED_UBUNTU } else { $NEED_OPENWRT }
 if ($SIZE -lt $need) {
