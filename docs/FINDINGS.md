@@ -1622,6 +1622,45 @@ aaaa removed", and 0.4 s later the next detection. 14 detections in 37 s (279 s 
 400 kHz, 1 bit, legacy, 3.30 V while `vddsdio` read 1800000 uV. A reboot with the card in gave the working SDR104
 card above.
 
+### 31k. The Linux filesystem on the SD card
+Measured on the F50 with the same SL32G card (29.7 GiB, 62331871 sectors in `mmcblk1p1`) on 2026-10-04/05, with
+the installer of this branch, the 6.18.55 #4 bundle and the v2026.10.08 root filesystems, Ubuntu 24.04 and OpenWrt
+on the card, the earlier installation still in the internal region.
+
+- **Formatting.** Android's `/system/bin/mke2fs` (1.46.2) with `-b 4096 -m 0` and one inode per 256 KiB for this
+  card (about 121000 inodes; the ratio grows with the card, up to 1 MiB, while at least 65536 inodes remain). The
+  format and the unpacking of both systems took about 70 s. Ubuntu 24.04 is 10790 tar entries and OpenWrt 1482,
+  so 65536 inodes still leave room for an `<os>.old` of each during an update. The default of one inode per 16 KiB
+  is millions of inodes on a 128 GB card; that is what kanoqwq found slow and failing there.
+- **Where it went.** The summary said `writes: SD card /dev/block/mmcblk1p1, boot_b, 32 bytes of misc`; the device
+  log `marked the internal installation: the SD card boots first`, and `/.mu300/root-on-sd` was in the internal
+  filesystem. Booted: `/run/mu300-root-dev` `/dev/mmcblk1p1`, `/mnt/mu300-disk` the card, Ubuntu's `findmnt /`
+  `/dev/mmcblk1p1[/ubuntu]` with `LABEL=mu300sd` in its fstab; the hotspot up in both systems; mobile data
+  connected (this test SIM carries traffic only through a VPN, so nothing further was tried there).
+- **Update.** `mu300-update boot` with a 6.18 bundle that has no `./features` refused (`this kernel bundle cannot
+  read the SD card, and this system runs from it; nothing was changed`, boot_b unchanged); with the `sdcard`
+  bundle it installed the 31 modules into both systems and the device booted from the card again.
+- **Reboots.** A loop rebooted OpenWrt on the card 19 times. 17 came back on the card, each with the card found at
+  2.43 to 2.46 s ("new UHS-I speed SDR104"), 0 `mmc1` error, timeout or crc lines, and SSH 106 s after the `reboot`
+  (91 s of uptime). One hung (below). In one the cable was pulled and plugged back in while the board was starting.
+  None landed on the internal system. Three restarts from outside the loop (that replugged cable, and two reboots
+  meant for another board on the same address) also came up on the card, as did the five reboots of the steps
+  before the loop.
+- **One boot hung.** The 10th reboot stopped at 15.09 s of uptime: init had found the card (`stage=sd-root
+  dev=/dev/mmcblk1p1` at 8.08 s), switched to OpenWrt at 8.13 s, procd had loaded `/etc/modules.d`, and the last
+  line in `console-ramoops` is `mali 23140000.gpu: GPU identified as 0x1 arch 9.0.9 r0p1 status 0`. A good boot
+  goes on with "No priority control manager is configured" 9 ms later. No panic, no oops, no watchdog reset. The
+  board then did not enumerate on USB (the hub port showed a connected device that was never enabled). After it
+  was powered again, LK started Android (slot b had `tries_remaining: 1`, not successful). It happened once in 19,
+  in the Mali driver's probe, long after the card was mounted, so it does not look like the card. It may be a hang
+  in the Mali driver under 6.18, or the power may have dropped at that moment (the board has no battery, and its
+  cable was found to need replugging later the same night). Which of the two is open.
+- **Uninstall.** Internal kept, card erased: `erased (/dev/block/mmcblk1p1)`, the internal `root-on-sd` marker
+  removed, the internal systems intact; `install.sh --check` then reported `existing mu300sd filesystem: no`.
+- **Without the card.** Not measured yet (the fallback to the internal system after the 8 s wait, `stage=sd-root-missing`).
+- **U30 Air.** No SD host at all: `/sys/class/mmc_host` holds `mmc0` only, `/sys/block` only `mmcblk0*` (Android,
+  stock kernel). `sd_probe` finds nothing, and the installers never ask.
+
 ## Updating on the device
 
 ### 32. Old kernels, an idle IPA, and an update that ended in Android
