@@ -73,8 +73,16 @@ sd_prepare() {  # sd_prepare DEV FORMAT: create mu300sd, or check that it is the
         if sd_ext4 "$1" && [ "$label" != mu300sd ]; then
             say "refusing to format: foreign ext4 (${label:-no label}) on the SD card"; return 1
         fi
-        say "creating ext4 mu300sd on $1"
-        mke2fs -t ext4 -L mu300sd -F "$1" >/dev/null
+        # Android's own mke2fs, not a busybox one that su's PATH may find first. Its default of one inode per
+        # 16 KiB is millions of inodes on a big card, and writing their tables is what made 128 GB cards slow and
+        # fail (kanoqwq). So fewer: the ratio doubles up to 1 MiB while at least 65536 inodes remain (the two
+        # systems, each with an old copy during an update, use about 25000). awk: the byte count is past mksh's
+        # 32-bit arithmetic.
+        mk=/system/bin/mke2fs; [ -x $mk ] || mk=mke2fs
+        s=$(cat "${MU300_SYSFS:-/sys}/class/block/${1##*/}/size" 2>/dev/null) || s=0
+        i=$(awk -v s="${s:-0}" 'BEGIN { i = 16384; while (i < 1048576 && s * 512 / (i * 2) >= 65536) i *= 2; print i }')
+        say "creating ext4 mu300sd on $1 (one inode per $((i / 1024)) KiB)"
+        $mk -t ext4 -F -b 4096 -m 0 -i "$i" -L mu300sd "$1" >/dev/null
     elif [ "$label" != mu300sd ]; then
         say "no mu300sd filesystem on $1 (run with FORMAT=1)"; return 1
     fi

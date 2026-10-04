@@ -39,7 +39,21 @@ class SdCard(ShellTest):
         for shell in self.each_shell():
             out, calls = self.run_fn(shell, f'sd_prepare {self.dev} 1')
             self.assertIn('rc=0\n', out)
-            self.assertIn(f'mke2fs -t ext4 -L mu300sd -F {self.dev}', calls)
+            # a card whose size cannot be read gets mke2fs's own ratio
+            self.assertIn(f'mke2fs -t ext4 -F -b 4096 -m 0 -i 16384 -L mu300sd {self.dev}', calls)
+
+    def test_big_card_gets_fewer_inodes(self):
+        # one inode per 16 KiB on a 128 GB card is millions of inodes and a slow, failing format: the ratio grows
+        # with the card, up to 1 MiB, and never below 65536 inodes (a small card keeps the default)
+        self.dev.write_bytes(bytes(4096))
+        size = self.tmp / 'sys' / 'class' / 'block' / 'mmcblk1p1' / 'size'
+        size.parent.mkdir(parents=True)
+        for sectors, ratio in ((1433600, 16384), (62333952, 262144), (249737216, 1048576), (3900000000, 1048576)):
+            size.write_text(f'{sectors}\n')
+            for shell in self.each_shell():
+                out, calls = self.run_fn(shell, f'sd_prepare {self.dev} 1')
+                self.assertIn('rc=0\n', out)
+                self.assertIn(f'-m 0 -i {ratio} -L mu300sd', calls, (sectors, shell))
 
     def test_foreign_ext4_is_refused(self):
         fake_ext4(self.dev, 'photos')
