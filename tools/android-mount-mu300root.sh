@@ -9,6 +9,10 @@ OFF=${MU300_OFF:-27762098176}
 # computed here. Callers that know it pass MU300_SIZE (install.sh, tools/reset-password.sh); without it the loop
 # simply spans to the end of the disk, which mounts any size of filesystem.
 SIZE=${MU300_SIZE:-}
+# MU300_RO=1: read only, and no journal replay either (an ext4 "ro" mount still replays it, which writes): the
+# Magisk installer only looks at what is installed before its plan, and a dry run must not change the filesystem
+MOUNT_OPTS=noatime
+[ "${MU300_RO:-}" != 1 ] || MOUNT_OPTS=ro,noload
 
 if [ "$1" = -u ]; then
     L=$(grep " $2 " /proc/mounts | cut -d' ' -f1)
@@ -23,7 +27,7 @@ if [ -n "${MU300_SD_DEV:-}" ]; then
     label=$(dd if="$MU300_SD_DEV" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\000')
     [ "$label" = mu300sd ] || { echo "NOT-MU300SD label=$label"; exit 1; }
     mkdir -p "$1"
-    mount -t ext4 -o noatime "$MU300_SD_DEV" "$1"
+    mount -t ext4 -o "$MOUNT_OPTS" "$MU300_SD_DEV" "$1"
     echo "MOUNTED $MU300_SD_DEV on $1"
     exit 0
 fi
@@ -40,7 +44,7 @@ done
 if [ -n "$REUSE" ]; then
     L=$REUSE
     mkdir -p "$MP"
-    mount -t ext4 -o noatime "$L" "$MP"
+    mount -t ext4 -o "$MOUNT_OPTS" "$L" "$MP"
     echo "MOUNTED $L on $MP"
     exit 0
 fi
@@ -65,5 +69,5 @@ magic=$(dd if="$L" bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n
 label=$(dd if="$L" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\000')
 [ "$label" = mu300root ] || { echo "NOT-MU300ROOT label=$label"; losetup -d "$L"; exit 1; }
 mkdir -p "$MP"
-mount -t ext4 -o noatime "$L" "$MP"
+mount -t ext4 -o "$MOUNT_OPTS" "$L" "$MP"
 echo "MOUNTED $L on $MP"
