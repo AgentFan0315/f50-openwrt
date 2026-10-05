@@ -1,5 +1,6 @@
 """tools/linux-mode.sh: which adb device install.sh and uninstall.sh work on. With a phone or tablet attached next to
 the device the installer must ask, never pick one by itself."""
+import struct
 import unittest
 
 from helpers import TOP, ShellTest
@@ -463,3 +464,49 @@ class SdErase(ShellTest):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class Region(ShellTest):
+    """storage.sh's region functions, with su_do running the device commands against a fake sysfs and eMMC file."""
+
+    def fake(self, ext4_at=None):
+        sysfs = self.tmp / 'sys/block/mmcblk0'
+        (sysfs / 'mmcblk0p1').mkdir(parents=True, exist_ok=True)
+        (sysfs / 'mmcblk0p1/start').write_text('2048\n')
+        (sysfs / 'mmcblk0p1/size').write_text(f'{4 << 21}\n')          # ends at 8 GiB + 1 MiB
+        (sysfs / 'size').write_text(f'{16 << 21}\n')                   # a 16 GiB eMMC
+        emmc = self.tmp / 'mmcblk0'
+        with open(emmc, 'wb') as f:
+            f.truncate(16 << 30)
+            if ext4_at is not None:
+                f.seek(ext4_at + 1024 + 4); f.write(struct.pack('<I', 1000))
+                f.seek(ext4_at + 1080); f.write(b'\x53\xef')
+                f.seek(ext4_at + 1144); f.write(b'mu300root')
+        return emmc
+
+    def run_region(self, shell, call):
+        su = (f'su_do() {{ sh -c "$(printf "%s" "$1" | sed -e "s|/sys/block|{self.tmp}/sys/block|g" '
+              f'-e "s|/dev/block/mmcblk0|{self.tmp}/mmcblk0|g")"; }}\n')
+        return self.sh(shell, su + f'. "{TOP}/tools/storage.sh"\n{call}\n'
+                       'echo "rc=$? OFF=$OFF SIZE=$SIZE existing=${existing:-} DIRTY=${DIRTY:-}"')
+
+    def test_probe(self):
+        self.fake()
+        for shell in self.each_shell():
+            out = self.run_region(shell, 'region_probe').stdout
+            start = ((2048 + (4 << 21)) // 4096 + 1) * 4096
+            end = (((16 << 21) - 34) // 4096 - 1) * 4096
+            self.assertIn(f'rc=0 OFF={start * 512} SIZE={(end - start) * 512}', out)
+
+    def test_existing_and_dirty(self):
+        start = ((2048 + (4 << 21)) // 4096 + 1) * 4096 * 512
+        emmc = self.fake(ext4_at=start)
+        for shell in self.each_shell():
+            out = self.run_region(shell, 'region_probe; region_find_existing').stdout
+            self.assertIn(f'OFF={start} SIZE={1000 * 4096} existing=yes', out)
+        self.fake()
+        with open(emmc, 'r+b') as f:
+            f.seek(start + (512 << 10)); f.write(b'data' * 1024)    # inside the first of the 16 sampled MiB
+        for shell in self.each_shell():
+            out = self.run_region(shell, 'region_probe; region_find_existing; region_dirty').stdout
+            self.assertIn('existing=no DIRTY=1', out)

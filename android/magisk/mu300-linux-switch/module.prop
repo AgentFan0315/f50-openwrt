@@ -3,4 +3,4 @@ name=MU300 Linux switch
 version=v1.0
 versionCode=1
 author=dikeckaan
-description=Boot the Linux system on slot b from Android. Arms the one-shot trial in misc (32 bytes) and reboots. Writes nothing else - boot_a, the GPT and userdata are never touched, and a Linux that fails to boot falls back to Android by itself.
+description=Boot the Linux system from the slot Android is not on. Arms the one-shot trial in misc (32 bytes) and reboots. Writes nothing else - Android's boot partition, the GPT and userdata are never touched, and a Linux that fails to boot falls back to Android by itself.
