@@ -185,6 +185,12 @@ into Android for you over SSH.
 ssh ubuntu@192.168.77.1        # the password you chose during the install
 ```
 
+For OpenWrt use `ssh root@192.168.77.1`, or open `http://192.168.77.1` in a browser for LuCI. On a U30 Air the
+address is `192.168.78.1` instead.
+
+The Wi-Fi network the device broadcasts is its hotspot; unless you chose otherwise it uses the name and password
+copied from Android.
+
 ### OpenWrt with the MU300 control panel
 
 The third system, `openwrt-luci`, is OpenWrt 25.12 with a LuCI application written for these devices, in English,
@@ -193,14 +199,16 @@ whenever OpenWrt is chosen (`MU300_OPENWRT=plain|luci` answers without asking), 
 `/openwrt-luci` on the Linux disk. Its release asset is `mu300-openwrt-luci-rootfs.tar.gz`; switch to it with
 `sudo mu300-os openwrt-luci`. The panel's pages:
 
-* **Dashboard:** live radio readings (signal, bands, cells, temperatures), mobile data state.
-* **Locks:** network mode, band, cell and EN-DC locks that persist across reboots and are replayed at boot, before
+* **Status dashboard:** live radio readings (signal, bands, cells, temperatures), mobile data state.
+* **Cellular > Network locks:** network mode, band, cell and EN-DC locks that persist across reboots and are replayed at boot, before
   the radio comes on where the modem allows it.
-* **SMS:** read, send and delete messages. A pool daemon syncs the SIM every 30 s and marks the messages it reads as
-  read, so `sms delete read` on the command line can delete messages nobody has seen there; delete from the panel.
-* **AT terminal:** guarded AT commands over the same channel daemons the system uses.
-* **Device:** USB role (device or host), the USB network mode (NCM, ECM or RNDIS, applied at the next boot) and
-  adapters in host mode that can join the LAN bridge. System > LEDs switches the lamps.
+* **Cellular > SMS:** read, send and delete messages. A pool daemon syncs the SIM every 30 s with `AT+CMGL`, which is
+  expected (3GPP behaviour) to mark unread messages as read; this is checked in the device phase. Do not run
+  `sms delete read` on this system.
+* **Cellular > AT terminal:** guarded AT commands over the same channel daemons the system uses.
+* **Cellular > Device management:** USB role (device or host), the USB network mode (NCM, ECM or RNDIS, applied at the next boot) and
+  adapters in host mode that can join the LAN bridge.
+* **Cellular > Adapter settings:** how the panel reaches the modem (AT backend, serial port, custom AT adapter).
 
 IPv6 on this system is relayed from the carrier (router advertisements and NAT66) instead of the prefix extension
 plain OpenWrt uses. Aurora is the default theme, Bootstrap stays installed. The timings of this system are measured
@@ -210,12 +218,6 @@ The panel is the work of kanoqwq ([`kanoqwq/mu300-linux`](https://github.com/kan
 `clean-tf-7.2`); this repository ports it, with translations rewritten as standard LuCI catalogs and the shared
 fixes applied to all three systems. The theme is [Aurora](https://github.com/eamonxg/luci-theme-aurora) by
 eamonxg. The app's own notes are in [`openwrt/luci-app-mu300/README.md`](openwrt/luci-app-mu300/README.md).
-
-For OpenWrt use `ssh root@192.168.77.1`, or open `http://192.168.77.1` in a browser for LuCI. On a U30 Air the
-address is `192.168.78.1` instead.
-
-The Wi-Fi network the device broadcasts is its hotspot; unless you chose otherwise it uses the name and password
-copied from Android.
 
 ## Everyday use
 
