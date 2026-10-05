@@ -448,7 +448,11 @@ sudo wifi-client forget                  # delete the saved network
   before anything is shared. The lease is renewed while joined, and a renewal
   that brings another address goes through the same check. Leaving (`disconnect`, `forget`, a failed or interrupted join) removes everything in
   one step, and only once the radio is off the network: a supplicant that will not stop keeps the firewall closed.
-  Forwarding is turned off again then unless mobile data is sharing. nftables tables `ip mu300_wifi_nat` (Ubuntu)
+  Forwarding is turned off again then unless mobile data is sharing. What counts is the table nft lists, never a
+  file: after every change the listing is compared rule for rule with what was asked, and a mismatch (or an nft that
+  cannot say) ends closed, or with the address and routes dropped; `wifi-client status` shows the state nft reports.
+  Stopping `mu300-wifi-client.service` takes the client down the same way, without touching the saved settings.
+  nftables tables `ip mu300_wifi_nat` (Ubuntu)
   and `inet mu300_wifi_filter`; on OpenWrt `wlan0` also joins the `wan` firewall zone (fw4 does the NAT), with a
   rule (`mu300-wifi-client-private`) for the private addresses. (A `LAN_CIDRS` entry in vpn.conf does not open the
   other network to LAN clients either.) With the [VPN](#vpn) on, clients still go through the tunnel, and its kill
