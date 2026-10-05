@@ -143,7 +143,7 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K34 | `mu300cell`: `sleep 20` after an attach failure removed | c | - | netifd re-runs setup immediately; the sleep is the only back-off between AT dial attempts |
 | K35 | `mu300cell`: `renew` handler (SIGUSR1 to the monitor) | b | openwrt-luci | relay mode only (the monitor exists only there) |
 | K36 | `mu300cell-v6.sh` event monitor (netlink + `+CGEV`) | b | openwrt-luci | relay mode |
-| K37 | `ndp-learn` + `init.d/mu300-ndp` | b | openwrt-luci | relay mode; the init script does nothing unless `network.wan.ipv6` is `relay` |
+| K37 | `ndp-learn` + `init.d/mu300-ndp` | b | openwrt-luci | relay mode; the init script does nothing unless `network.wan.ipv6` is `relay`. Only the bearer's /64 is routed to br-lan; the fork's per-neighbour /128 pins are rejected (a LAN client's spoofed neighbour advertisement pinned any address, the router's own or an internet host's, to br-lan) |
 | K38 | `mu300-led-events` (`ubus listen`: WAN and hostapd state -> LEDs) | a | OpenWrt | reworked onto `mu300-led` (D10) |
 | K39 | `www/.../view/system/leds.js`: LuCI LED page with the two lamp switches | b | openwrt-luci | writes `/etc/mu300/led.conf` through `mu300-led` instead of uci |
 
