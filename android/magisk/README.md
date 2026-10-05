@@ -1,7 +1,16 @@
 # Magisk module: switch to Linux from Android
 
-A one-tap way to start the Linux system from Android, for devices that already have Linux installed
-(`./install.sh`). It replaces having a computer plugged in just to change the boot slot.
+A one-tap way to start the Linux system from Android. It replaces having a computer plugged in just to change the
+boot slot. There are two ways to get it:
+
+* **The release's installer zips** (`mu300-magisk-<tag>-<system>-k<kernel>.zip`, see "Installing from Android with a
+  Magisk zip" in the [main README](../../README.md)) install Linux and then stay on the device as this module. After
+  the install it is called "MU300 Linux" instead of "MU300 Linux switch"; the module id is the same
+  (`mu300_linux_switch`), so the two replace each other. The Action button, `mu300-linux` and everything below work
+  the same. Their files come from this directory (`installer/` is the installation part, `mu300-linux-switch/` is
+  this module), assembled by `tools/make-magisk-zips.sh`.
+* **The switch-only module**, for a device where Linux was installed from a computer (`./install.sh`). It installs
+  nothing and only changes the boot slot:
 
 ```sh
 android/magisk/build.sh          # builds mu300-linux-switch.zip
