@@ -1684,11 +1684,12 @@ on the card, the earlier installation still in the internal region.
   four good boots of that kernel on F50 #1 (two from the card, two of the internal system; one of each after arming
   from Android): the board did not enumerate (the dock port showed "connect" and never "enable"), and a power cycle of
   that port (which does not cut the board's power on this dock) did not bring it back. About 20 minutes later it
-  was in Android on its own: LK found slot b at `tries_remaining 1` (armed at 6), so five boots had not reached the
-  system's 30 s mark. The last of them (`console-ramoops`) had found the card (`stage=sd-root` at 5.06 s), switched
-  to OpenWrt at 5.12 s and ends at 7.19 s ("random: crng init done", while procd loads the modules), with no panic
-  or oops; `dmesg-ramoops` was an old one. Armed again from Android, it booted from the card at once. So the hang is
-  not the card and not new, but it can repeat on consecutive boots; what it is stays open.
+  was in Android on its own: LK found slot b at `tries_remaining 1` (armed at 6). That was **one** hung Linux boot,
+  not five: LK's log has no `final bootargs` in the four boots after it - each found the PMIC watchdog's reset flag,
+  went into its sysdump and was reset before the dump was done (31m). That boot (`console-ramoops`) had found the
+  card (`stage=sd-root` at 5.06 s), switched to OpenWrt at 5.12 s and ends at 7.19 s ("random: crng init done", in
+  OpenWrt's preinit), with no panic or oops; `dmesg-ramoops` was an old one. Armed again from Android, it booted
+  from the card at once. So the hang is not the card; what it is stays open (31m).
 - **Uninstall.** Internal kept, card erased: `erased (/dev/block/mmcblk1p1)`, the internal `root-on-sd` marker
   removed, the internal systems intact; `install.sh --check` then reported `existing mu300sd filesystem: no`.
 - **Without the card.** Simulated by relabelling the card's filesystem away from `mu300sd` on F50 #1 (2026-10-05,
@@ -1716,6 +1717,49 @@ on the card, the earlier installation still in the internal region.
   the same init: 2 boots from the card, `mmcblk1` at 2.46 and 2.47 s, `stage=sd-root` at 8.05 and 8.12 s.
 - **U30 Air.** No SD host at all: `/sys/class/mmc_host` holds `mmc0` only, `/sys/block` only `mmcblk0*` (Android,
   stock kernel). `sd_probe` finds nothing, and the installers never ask.
+
+### 31m. Hard hangs in the first seconds under 6.18 (open)
+Investigated on F50 #1 on 2026-10-05: OpenWrt on the card, soft-reboot loops from the Mac (`reboot`, SSH expected
+within 200 s). The boots of the card system had two temporary preinit hooks: a 1 s heartbeat into the kernel log
+(with the cluster frequencies) and a copy of the previous boot's `console-ramoops` onto the card.
+
+| kernel | boots | hard hangs | other |
+|---|---|---|---|
+| 6.18.55 #7 (f50-leds-fixes) | 20 | 1 (Mali probe, boot 12) | 1 init stall, the card on `mmc0` (31l on branch mmc-order-fix) |
+| main + the mmc fix, old init | 20 | 0 | - |
+| main + the mmc fix, new init | 10 | 1 (preinit, boot 1) | - |
+
+Together with the two earlier ones (31k's 10th reboot, the 12:55 one in 31k), there are two signatures:
+- **The Mali probe.** The last line is `mali 23140000.gpu: GPU identified as 0x1 arch 9.0.9 r0p1 status 0` (12.85 s;
+  15.09 s in 31k). Up to that line the log matches a good boot line for line. A good boot prints `No priority
+  control manager is configured` 9 ms later. In between, the probe powers the GPU off (top force-shutdown, GPLL off,
+  vddgpu DCDC disabled, 10 us) and on again within milliseconds (DCDC on + 10 us, GPLL, top power, soft reset,
+  clocks, `top_state` polled), and then reads `COHERENCY_FEATURES`.
+- **About 7.2 to 7.6 s, in OpenWrt's preinit.** The last line is `random: crng init done` (7.19 and 7.55 s). The
+  heartbeat came at 6.54 s and not at 7.55 s. Nothing in that window loads modules or touches the GPU.
+In both, the heartbeat stops together with the kernel log: no soft or hard lockup report (the buddy detector is
+built in), no hung-task report (the timeout was 8 s in these boots), no panic. The whole SoC stops, the way it does
+on a bus access that never completes. The PMIC watchdog (procd: 30 s) then resets the board.
+
+**One hang costs five tries.** After the PMIC watchdog's reset, LK (a userdebug build) sees `hw watchdog rst int
+pending` and goes into `sprd_sysdump`: a minidump plus a zlib-compressed full RAM dump (40 s for the first 848 MiB).
+It is reset again before the dump is done, so the flag stays set and the next LK does the same. LK's log shows no
+`final bootargs` for those boots: no kernel was started. Each round takes a slot b try. The board ends in Android
+about 20 minutes after the hang (1274 and 1290 s measured). The same pattern appears for the 00:36 and 12:55 hangs
+of 2026-10-05 (LK boots 36-39 and 48-51). A reboot that is not a watchdog reset (a panic, init's 300 s timer) goes
+straight back to Linux.
+
+Ruled out or not reproduced on a running board:
+- CPU DVFS: all three clusters through all their frequencies with the userspace governor, 377146 changes in 100 s,
+  no hang.
+- vddgpu and GPU power cycling: 400 cycles through `power_policy` (always_on, then coarse_demand, then wait until
+  vddgpu is off), no hang.
+- f50-leds-fixes' sipa change (F3): the hangs occur with and without it, and before the modem starts.
+- Found on the way: `rmmod mali_kbase` panics with an SError in `mali_platform_term()` (`regmap_update_bits` on a
+  GPU-side register with the GPU off), after a `dump_stack` from `mali_poweron_clear_flag()`. Nothing unloads Mali,
+  so it is not a boot path. It does show that a GPU-side access at the wrong time is fatal on this SoC.
+Still open: which access stalls the bus. A hang rate of about 2 in 50 boots needs a reproducer, or 100+ boots per
+variant, before a change (for example a delay or poll before the probe's first GPU read) can be measured.
 
 ## Updating on the device
 
