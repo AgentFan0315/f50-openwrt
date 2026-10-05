@@ -1470,6 +1470,16 @@ The vendor comments the thread's wake-up out ("zsw changed", to keep `rps_cpus` 
 sat in its pre-start state - uninterruptible - for good: one more on the load average, and on 6.18 a hung-task
 report every two minutes. It is not created any more.
 
+`sipa-free-N` and `sipa-fill-recv-N` had the same pre-start sleep for a different reason: they are created with
+`kthread_create()` and first woken in the IPA's runtime-PM resume, which never comes on a device without a SIM. On
+the second F50 (no SIM, Ubuntu) under release v2026.10.08's 6.18.54: both in D state, the 1-minute load 2.34 at
+5 minutes of uptime, two "blocked for more than 120 seconds" reports at 246 s. They now start at once and wait,
+interruptibly, for a flag set where the vendor woke them (6.18.55 #7): both in S state, load 0.27 / 0.32 / 0.19 at
+11 minutes, 0 reports. F50 #1 (SIM) on the same kernel: mobile data and its VPN up (exit address shown, GitHub
+reached), both threads running. The vendor 5.4 kernel has the same threads in D state (plus `sipa-set-rps`,
+`slog-0-0` and the Wi-Fi TX thread: load about 5.4 at idle on the second F50); 5.4 reports no hung tasks, and it was
+left as it is.
+
 ### 31f. The delegate on OpenWrt: -EINPROGRESS taken for a failure
 On OpenWrt the downlink died on some boots and the board crashed on others, and the recorder and pstore (31d)
 caught both crashes in the delegate's connection thread `dele-4-5`: a call through NULL (`pc : 0x0`,
@@ -1629,6 +1639,13 @@ aaaa removed", and 0.4 s later the next detection. 14 detections in 37 s (279 s 
 400 kHz, 1 bit, legacy, 3.30 V while `vddsdio` read 1800000 uV. A reboot with the card in gave the working SDR104
 card above.
 
+The loop was looked for again without hands (2026-10-05, 6.18.55 #7, F50 #1 running its internal system so that the
+card was not the root): the `sdio_sd` host unbound from `sdhci_sprd_r11` and bound again five times (once, then
+with 0, 30, 1 and 1 s between). Each time "card aaaa removed", then "new UHS-I speed SDR104 SDHC card" about
+0.35 s after the bind, `mmcblk1p1` back, `ios` SDR104 at 1.80 V, and 0 "stuck being busy" or `mmc1` error, timeout
+or crc lines. A rebind is a fresh probe with a power cycle of the slot, so it is not the case above (a host that had
+polled an empty slot for minutes); that one needs a card put in by hand and stays open. No kernel change was made.
+
 ### 31k. The Linux filesystem on the SD card
 Measured on the F50 with the same SL32G card (29.7 GiB, 62331871 sectors in `mmcblk1p1`) on 2026-10-04/05, with
 the installer of this branch, the 6.18.55 #4 bundle and the v2026.10.08 root filesystems, Ubuntu 24.04 and OpenWrt
@@ -1665,10 +1682,20 @@ on the card, the earlier installation still in the internal region.
   cable was found to need replugging later the same night). Which of the two is open.
 - **Uninstall.** Internal kept, card erased: `erased (/dev/block/mmcblk1p1)`, the internal `root-on-sd` marker
   removed, the internal systems intact; `install.sh --check` then reported `existing mu300sd filesystem: no`.
-- **Without the card.** Pending: card-pull fallback. Not measured on the device yet (it needs the card pulled by
-  hand): neither the fallback to the internal system after the wait (`stage=sd-root-missing`) nor the way to Android
-  without an internal system. What exists is the design and the unit tests of the root selection
-  (`tests/test_boot_init.py`, RootSelect).
+- **Without the card.** Simulated by relabelling the card's filesystem away from `mu300sd` on F50 #1 (2026-10-05,
+  6.18.55 #7, OpenWrt on the card, the older installation still in the internal region with its `root-on-sd`
+  marker): the card stays in the slot and is set up at 2.45 s as on every boot, but holds no `mu300sd`. With a
+  foreign label (`photos`) init mounted the internal system at 5.21 s, waited for a card for 8.85 s
+  (`stage=sd-root-missing (marker present, booting the internal system)` at 14.06 s) and started the internal
+  OpenWrt; with no label at all the same, 5.19 s and 14.05 s (8.86 s). The wait stayed at 8 s: the card that is
+  there is set up (`sd_coming` false), so the 30 s allowance is not used. Labelled `mu300sd` again from the internal
+  system (`e2label`), the next boot started the card again (`stage=sd-root dev=/dev/mmcblk1p1` at 5.09 s). On this
+  board the internal OpenWrt has `default-boot` android, so init restored slot a on those fallback boots
+  (`stage=misc-restored`): the reboot after each landed in Android, and `su -c mu300-linux` started Linux again. A
+  system of the user's in default-Linux mode would stay in Linux. A card that is physically pulled was not tried (no
+  hands at the board), nor a device with no internal system and no card (it would have meant erasing F50 #1's
+  internal installation); for those there are the unit tests of the root selection (`tests/test_boot_init.py`,
+  RootSelect).
 - **Kernel 5.4.** Release v2026.10.08's 5.4 bundle with this branch's init in its generic ramdisk and `sdcard` in
   `./features`, installed on the card system with `mu300-update kernel 5.4` (2026-10-05): 7 boots, 2 with the init
   from before the longer wait and 5 with the one that has it, all from the card (`/run/mu300-root-dev`
@@ -1978,3 +2005,31 @@ Throughput did not move beyond its spread: phone -> device 537-555 vs 553-571 Mb
 * Measuring Wi-Fi with an Android phone: flushing the phone's neighbour entry for its gateway made Android give up
   the network and join another saved one; `cmd wifi set-network-selection-config enabled enabled -a 2` keeps it on
   the network it is on while testing (and `-a 0` restores it).
+
+## The second F50
+
+### 34. LEDs, and the defects from a second board's test
+A second F50 (restored from F50 #1's backup, with its own eMMC and factory Wi-Fi address) was tested from a user's
+point of view; what came out of it, measured on 2026-10-05:
+
+* **LEDs.** The F50 has the PMIC's RGB LED and the keypad backlight sink (`keyboard-backlight`, 0-127), nothing
+  else. ZTE's Android (read from `/sys/class/leds` on the second F50, no SIM) lights `sc27xx:red` without service
+  and `keyboard-backlight` at 48 while the hotspot is up (0 when it is stopped, 48 again when it starts). The Wi-Fi
+  light stayed dark under Linux because `mu300-led` mapped no Wi-Fi LED on the F50. Now: network blue on 4G, white
+  (the green channel) on 5G, red without service; Wi-Fi `keyboard-backlight` 48. Every state was driven and read
+  back on both F50s; on F50 #1 (OpenWrt) the hotspot switched off and on the way LuCI does it
+  (`uci set wireless.ap0.disabled=1; uci commit; reload_config`) gave 48, 0, 48 (`mu300-led wifi sync` from a
+  procd reload trigger on `wireless`).
+* **mu300-update.** It already skipped systems at the release's version (`ubuntu: already v2026.10.08`); a
+  rollback's `ubuntu.broken` (655 MB) stayed on the disk through every update. `apply` now removes stale
+  `<os>.broken` copies, never the running root, before counting free space: used space 2.8 G before, 2.2 G after.
+* **Early kernel messages.** `journalctl -k` shows nothing: journald has `ReadKMsg=no`, and `kmsg-forward` writes
+  warnings as `journalctl -t kernel`. It also read with `dmesg --follow-new`, so the boot's first seconds (the call
+  traces of 6.18) were never written. The first start of a boot now forwards the buffer from its start, with the
+  kernel's timestamps: on the second F50 the journal began at `[0.000000]` under 5.4, and had 24 messages from the
+  first 3 s under 6.18. A ring buffer that has already wrapped (5.4's vendor chatter wraps it within hours) is lost
+  either way; this is about the boot.
+* **5.4 Wi-Fi MAC.** The vendor driver takes the address from Android's `/mnt/vendor/wifimac.txt`; under Linux it
+  used a random `40:45:da:...` on every boot. It now reads LK's `androidboot.wifimac` from `/chosen/bootargs`, as the
+  mainline port does: `5c:7d:ae:b4:0b:d0` (the second F50's bootargs) over two 5.4 boots and a 6.18 one; F50 #1's is
+  `5c:7d:ae:b4:0b:be`.
