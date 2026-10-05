@@ -269,6 +269,7 @@ for os in $OSES; do
     tar -xzpf $tarball -C $M/$os.new
     # the account the installer gives a password (ubuntu, OpenWrt's root) and its hash in the image
     case $os in ubuntu) pwu=ubuntu ;; *) pwu=root ;; esac
+    carried=0
     imghash=$(sed -n "s/^$pwu:\([^:]*\):.*/\1/p" $M/$os.new/etc/shadow 2>/dev/null | head -n1) || imghash=
     # prebuilt images: firmware and Android userspace pulled from this device by install.sh (tools/vendor-overlay.py)
     if [ -f $T/mu300-vendor-$os.tar.gz ]; then
@@ -319,6 +320,7 @@ for os in $OSES; do
         say "kept from the previous $os:$kept"
         if [ -f "$M/$os/etc/shadow" ]; then
             merge_accounts "$M/$os" "$M/$os.new" || { say "could not carry the accounts of $os over; nothing was replaced"; exit 1; }
+            carried=1
             say "kept the accounts and passwords of the previous $os"
         fi
         extra_keep_vpn $M $M/$os
@@ -333,9 +335,10 @@ for os in $OSES; do
     fi
     h=$(sed -n "s/^$pwu:\([^:]*\):.*/\1/p" $M/$os.new/etc/shadow 2>/dev/null | head -n1) || h=
     case $h in '$'?*) ;; *) h= ;; esac
-    if [ -z "$h" ] || [ -e $M/$os.new$ACCOUNTS_MARK ] || { [ -z "$PWHASH" ] && [ "$h" = "$imghash" ]; }; then
+    if [ -z "$h" ] || [ -e $M/$os.new$ACCOUNTS_MARK ] ||
+        { [ -z "$PWHASH" ] && { [ "$carried" != 1 ] || [ "$h" = "$imghash" ]; }; }; then
         rm -rf $M/$os.new
-        say "$os: $pwu would keep no password of its own (empty, the image's default, or none to carry over); $os was not replaced"
+        say "$os: $pwu would keep no password of its own (empty, the image's default, or none to carry over); $os was not replaced. Install again with MU300_PASSWORD_RESET=yes in /data/adb/mu300-install.conf (or choose a password in install.sh)"
         exit 1
     fi
     rm -rf $M/$os && mv $M/$os.new $M/$os

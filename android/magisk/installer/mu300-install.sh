@@ -378,14 +378,17 @@ $(t 'Take the card out and install the zip again, or install to the card (MU300_
 # crypt hash in /etc/shadow (not empty, not locked) that is not the image's default, and they are not the image's
 # accounts (an older mu300-update leaves .mu300-accounts-from-image until they are carried over). Anything else, a
 # shadow that cannot be read included, gets a new password: an update never keeps a default or an empty one.
-image_hash() {  # image_hash USER: USER's hash in the image this zip installs
-    { tar -xzOf "$W/mu300-$OS.tar.gz" ./etc/shadow 2>/dev/null || tar -xzOf "$W/mu300-$OS.tar.gz" etc/shadow 2>/dev/null; } |
-        sed -n "s/^$1:\([^:]*\):.*/\1/p" | head -n1
+image_hash() {  # image_hash USER: USER's hash in the image this zip installs (OpenWrt's root: empty); fails when the
+    # image's shadow or USER's line in it cannot be read
+    _ish=$(tar -xzOf "$W/mu300-$OS.tar.gz" ./etc/shadow 2>/dev/null || tar -xzOf "$W/mu300-$OS.tar.gz" etc/shadow 2>/dev/null) || _ish=
+    printf '%s\n' "$_ish" | grep -q "^$1:" || return 1
+    printf '%s\n' "$_ish" | sed -n "s/^$1:\([^:]*\):.*/\1/p" | head -n1
 }
 default_hash() {  # default_hash USER HASH: HASH is the image's own password (this image's hash, or a SHA-crypt hash of
     # the images' well-known "ubuntu", which the bundled mkpasswd can check; OpenWrt's is empty, never a hash)
-    _ih=$(image_hash "$1") || _ih=
-    [ -z "$_ih" ] || [ "$2" != "$_ih" ] || return 0
+    # an image whose hash cannot be read counts as the default: what cannot be decided gets a new password
+    _ih=$(image_hash "$1") || return 0
+    [ "$2" != "$_ih" ] || return 0
     case $2 in '$5$'*) _m=sha256 ;; '$6$'*) _m=sha512 ;; *) return 1 ;; esac
     _s=${2#\$?\$}; _s=${_s%%\$*}
     case $_s in rounds=*|'') return 1 ;; esac
@@ -654,8 +657,8 @@ save_password() {
     pw_show
 }
 # A MU300_PASSWORD or MU300_PASSWORD_RESET line in the trusted conf, and an erasing setting this run used
-# (USED_KEYS), have done their job: each becomes a comment (the file stays root's, mode 600). A key is matched as conf_load reads it (blanks around and
-# inside it do not count); a conf inside the zip is never edited.
+# (USED_KEYS), have done their job: each becomes a comment (the file stays root's, mode 600). A key is matched as
+# conf_load reads it (blanks around and inside it do not count); a conf inside the zip is never edited.
 conf_drop_used() {
     awk -v d="$_drop " '{ l = $0; sub(/^[ \t]*/, "", l); k = l; sub(/=.*/, "", k); gsub(/[ \t]/, "", k)
            if (index(l, "=") && k != "" && index(d, " " k " ")) print "# " k " was used by the installer and removed"; else print }' "$TRUSTED_CONF"

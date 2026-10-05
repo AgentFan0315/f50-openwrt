@@ -354,12 +354,15 @@ class InstallerCase(ShellTest):
         fake_android_root(self.fake.root / 'android')
         (self.fake.root / 'magisk/busybox').symlink_to(BUSYBOX)
 
-    def zip(self, system='openwrt', kernel='6.18', features=('sdcard',), devices='f50 u30air', corrupt=False):
+    IMAGE_SHADOW = 'root::19000:0:99999:7:::\nubuntu:$6$img$imagehash:19000:0:99999:7:::\n'
+
+    def zip(self, system='openwrt', kernel='6.18', features=('sdcard',), devices='f50 u30air', corrupt=False,
+            image_shadow=True):
         """mu300/ with its manifest, and the zip with the payload of SYSTEM and KERNEL"""
         self.mu300 = self.tmp / 'zip' / 'mu300'
         shutil.rmtree(self.tmp / 'zip', ignore_errors=True)
         shutil.copytree(INSTALLER_DIR, self.mu300, symlinks=True)
-        self.zip_args = dict(system=system, kernel=kernel, features=features, devices=devices)
+        self.zip_args = dict(system=system, kernel=kernel, features=features, devices=devices, image_shadow=image_shadow)
         self.kernel_release = f'{kernel}.0-mu300' if kernel != '5.4' else '5.4.254-mu300'
         kasset = 'mu300-kernel.tar.gz' if kernel == '5.4' else f'mu300-kernel-{kernel}.tar.gz'
         rasset = ROOTFS_ASSET[system]
@@ -367,7 +370,10 @@ class InstallerCase(ShellTest):
         kb = tar_gz({'Image': b'\x7fkernel' * 1000, 'ramdisk-generic.lz4': generic_ramdisk(),
                      'modules/mu300-test.ko': b'\x7fELF test module', 'kernel.release': (self.kernel_release + '\n').encode(),
                      'devices': (devices + '\n').encode(), 'features': ''.join(f + '\n' for f in features).encode()})
-        rootfs = tar_gz({'etc/os-release': f'ID={os_}\n'.encode()})
+        files = {'etc/os-release': f'ID={os_}\n'.encode()}
+        if image_shadow:
+            files['etc/shadow'] = self.IMAGE_SHADOW.encode()
+        rootfs = tar_gz(files)
         (self.mu300 / 'manifest').write_text(
             f'TAG=v2026.10.06\nSYSTEM={system}\nOS={os_}\nUBUNTU={ubuntu}\nKERNEL={kernel}\nKERNEL_ASSET={kasset}\n'
             f'ROOTFS_ASSET={rasset}\nSHA256_KERNEL={hashlib.sha256(kb).hexdigest()}\n'
@@ -1087,6 +1093,13 @@ class Install(InstallerCase):
             ('default password', lambda: (self.existing_filesystem(systems=('openwrt',)),
                                           (self.fake.root / 'fs/openwrt/etc/shadow').write_text(
                                               'root:$6$abc$' + b'ubuntu'.hex() + ':19000::::::\n')), None),
+            # the image's own hash carried over from a system without the mark
+            ('image hash', lambda: (self.zip(system='ubuntu-24.04'), self.existing_filesystem(systems=('ubuntu',)),
+                                    (self.fake.root / 'fs/ubuntu/etc/shadow').write_text(
+                                        'ubuntu:$6$img$imagehash:19000::::::\n')), None),
+            # the zip's image shadow cannot be read: nothing to compare with, so not kept
+            ('unreadable image', lambda: (self.zip(image_shadow=False), self.existing_filesystem(systems=('openwrt',)),
+                                          self.accounts('openwrt')), None),
             # root has no password of its own (OpenWrt's image leaves it empty; locked or missing alike)
             ('no hash', lambda: (self.existing_filesystem(systems=('openwrt',)),
                                  (self.fake.root / 'fs/openwrt/etc/shadow').write_text('root::19000::::::\nubuntu:$6$x$y:1::\n')),
