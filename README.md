@@ -439,12 +439,14 @@ sudo wifi-client forget                  # delete the saved network
 * **Sharing, and what it does not share**: USB clients reach the internet through the network, and only the
   internet: its own devices and router (private, link-local, CGNAT, multicast and other special-purpose addresses,
   and its subnet) are not reachable from the LAN, nor anything over IPv6, so a guest on the device's USB does not
-  end up on your home or hotel network. From that network only ping, DHCP, IPv6 neighbour discovery and answers
+  end up on your home or hotel network (its router's public address is the internet's, though, and some routers
+  answer on it). From that network only ping, DHCP, IPv6 neighbour discovery and answers
   come in: SSH and the device's other services are closed to it, as they are to the modem (use USB to reach the
   device). The firewall is up, closed, before the radio joins; sharing starts only once DHCP has answered and the
   address is checked (a network on the LAN's own subnet is refused). A lost link closes the sharing again and drops
   the address (mobile data takes over); when the link comes back, DHCP is asked again and the new address checked
-  before anything is shared. Leaving (`disconnect`, `forget`, a failed or interrupted join) removes everything in
+  before anything is shared. The lease is renewed while joined, and a renewal
+  that brings another address goes through the same check. Leaving (`disconnect`, `forget`, a failed or interrupted join) removes everything in
   one step, and only once the radio is off the network: a supplicant that will not stop keeps the firewall closed.
   Forwarding is turned off again then unless mobile data is sharing. nftables tables `ip mu300_wifi_nat` (Ubuntu)
   and `inet mu300_wifi_filter`; on OpenWrt `wlan0` also joins the `wan` firewall zone (fw4 does the NAT), with a
@@ -453,8 +455,8 @@ sudo wifi-client forget                  # delete the saved network
   switch covers `wlan0` as it does the modem; these tables never let anything past it.
 * Names are shown as the network sends them when they are printable UTF-8; control characters, terminal escape
   sequences, invisible and bidirectional characters, bytes that are not UTF-8 and a backslash itself are shown
-  as `\xNN`. Such a
-  network cannot be picked from the `mu300-toolkit` list; join it with `sudo wifi-client connect` and its real name.
+  as `\xNN`, and so are spaces at either end of a name. Such a network cannot be picked from the `mu300-toolkit`
+  list; join it with `sudo wifi-client connect` and its real name (a name with control characters cannot be joined).
 * The Wi-Fi route has metric 50 and mobile data 100, so with both the Wi-Fi is used and the SIM stays idle.
 
 ### Updating
