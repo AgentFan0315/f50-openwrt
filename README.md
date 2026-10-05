@@ -76,7 +76,7 @@ need `adb` on your computer. Getting to that point is not part of this project.
 > There is always some risk. Nothing here is endorsed by ZTE or Unisoc.
 
 **What protects you:**
-* Linux is installed into empty, unused space on the internal storage; Android's partitions are not touched (except on the 32 GB variant, where you can choose to shrink `userdata` to create that space).
+* Linux is installed into empty, unused space on the internal storage, or onto an SD card; Android's partitions are not touched (except on the 32 GB variant, where you can choose to shrink `userdata` to create that space).
 * Linux starts as a "trial boot". If it fails to start, the bootloader returns to Android by itself.
 * `./uninstall.sh` puts everything back.
 
@@ -117,6 +117,18 @@ If it reports none at all, you have the **32 GB variant**, where `userdata` fill
 room by shrinking it — that erases everything in Android and rewrites the partition table, so it is experimental
 and it asks first. Back the device up with `tools/backup-device.sh` before saying yes. If the numbers look like
 neither case, stop and open an issue with what `--check` printed; they identify the variant.
+
+**On the SD card.** With a card of at least 700 MiB in the slot the installer asks whether the Linux filesystem
+goes there instead of into the free eMMC space (`MU300_STORAGE=sd` answers it). The card is formatted (ext4,
+label `mu300sd`); on the eMMC only `boot_b` and 32 bytes of `misc` are written, so a device with a small eMMC
+needs no repartitioning. A card that holds another Linux (ext4) filesystem is never formatted. Without the card
+the device starts the internal installation if there is one, Android otherwise. All three kernels read the card.
+The U30 Air has no card slot, so it never asks there.
+
+* Put the card in while the device is switched off. A card inserted while Linux runs is seen, but it cannot be
+  read until the next reboot.
+* The boot image starts any card whose filesystem is labelled `mu300sd`. That keeps the device bootable when the
+  card is replaced, and it also means that whoever has the device can start a system of their own from a card.
 
 **Step 2 — install.**
 
@@ -282,6 +294,9 @@ Android data is left alone, unless you ask it to give the space back (see below)
 * **quick** — only erases the filesystem headers; the files stay readable on the flash until the space is reused.
 * **keep** — leaves the Linux filesystem alone; it simply never boots again.
 
+A Linux filesystem on the SD card is erased too if you say so: its first 64 MiB are overwritten, which is quick, and
+the files stay readable on the card until the space is reused. A card with any other filesystem is never touched.
+
 If you shrank `userdata` to make room on the 32 GB variant, it then offers to grow it back over the freed space.
 That is off by default and asks twice, because on the 64 GB device the same answer would hand Android the free
 area it has always had — and like the shrink, it erases Android's data again.
@@ -311,9 +326,9 @@ Like the installer, it offers to reboot the device from Linux into Android first
 
 The device has two Android boot slots, A and B. Android lives on slot A and is left alone. The installer puts a
 custom Linux kernel into slot B and marks it as a one-time trial. At boot, a small startup program loads the
-device's drivers, finds the Linux filesystem in the unused part of the internal storage and starts Ubuntu or OpenWrt
-from it. If Linux ever fails to start, the bootloader falls back to Android by itself. Three small Android programs
-keep running inside Linux in a sandbox, because the modem needs them.
+device's drivers, finds the Linux filesystem on the SD card or in the unused part of the internal storage and
+starts Ubuntu or OpenWrt from it. If Linux ever fails to start, the bootloader falls back to Android by itself. Three
+small Android programs keep running inside Linux in a sandbox, because the modem needs them.
 
 The kernel is built from ZTE's published (GPL) source. The reasoning behind each step is in
 [`docs/FINDINGS.md`](docs/FINDINGS.md), and the full build is in [`docs/BUILD.md`](docs/BUILD.md).

@@ -1556,6 +1556,131 @@ was never set up. It is initialised before every scan now, `remove` checks for a
 a timed-out scan is tried once more before Wi-Fi and Bluetooth are given up. Both copies of the driver: the 5.4
 tree (`kernel/patches/wcn-pcie-scan-timeout.patch`) and `upstream/modules/wcn_bsp`.
 
+### 31j. SD host under mainline
+The stock device tree of the F50 (read from `/proc/device-tree/soc/ap-ahb` under 6.18) describes three
+`sprd,sdhci-r11` hosts, all `status = "okay"`:
+
+| node | `sprd,name` | bus-width | properties |
+|---|---|---|---|
+| `sdio@22200000` | `sdio_emmc` | 8 | `non-removable`, `no-sd`, `no-sdio`, HS200/HS400/HS400ES |
+| `sdio@22210000` | `sdio_sd` | 4 | `cd-gpios = <0x170 35 0>`, `no-mmc`, `no-sdio`, `sd-uhs-sdr50`, `sd-uhs-sdr104`, `vmmc-supply`, `vqmmc-supply`, `sd-detect-pol-syscon`, `sd-hotplug-{debounce-cn,debounce-en,protect-en,rmldo-en}-syscon` |
+| `sdio@22220000` | `sdio_wifi` | 4 | `no-sd`, `no-mmc`, SDR50/SDR104 |
+
+The mainline port used to let only the `non-removable` host probe, so the F50 showed `mmc0` alone with a card in
+the slot. The gate now lets the eMMC and the `sdio_sd` host through; `sdio_wifi` stays unprobed (Wi-Fi is on PCIe).
+
+`/proc/device-tree/aliases` (read under 6.18.55) has no `mmc` entries at all, only cooling devices, `eth*`, `i2c*`,
+`serial*`, `spi*`, `v4-modem*` and a few others. The host numbers therefore come from the probe order, not from an
+alias: `mmc0` is `22200000.sdio` (the eMMC) and `mmc1` is `22210000.sdio` (the slot), under 6.18 and 5.4 alike.
+That the eMMC is `mmcblk0` is what init and the installers rely on when they look at `mmcblk[1-9]` for the card.
+
+Phandle 0x170 is `gpio@2000c0`, `sprd,qogirn6pro-eic-sync`. Mainline's `sprd-eic` binds it, but as a chip of 24
+lines (`gpiochip3: 24 GPIOs`), and the slot's card detect is line 35: the lookup fails, `mmc_of_parse()` returns
+`-EPROBE_DEFER` at about 2.09 s, and the host would stay deferred. `mmc_of_parse()` requests the CD GPIO before it
+reads the write protect GPIO, the bus mode properties (`sd-uhs-sdr104`, `no-sdio`, `no-mmc`, ...) and the power
+sequence, so it returns before any of those. For that host alone the port therefore removes `cd-gpios` from the
+node (`of_remove_property`), runs the parse again (now without a CD GPIO: -ENOENT, which it accepts) and sets
+`MMC_CAP_NEEDS_POLL`; it logs "MU300: CD GPIO deferred, polling the card slot". `sdhci-sprd` has
+`SDHCI_QUIRK_BROKEN_CARD_DETECTION`, so without a CD GPIO every poll that finds no card tries to start one.
+
+The first version of this edit only masked the `-EPROBE_DEFER` and kept the half-done parse; the measurements of
+that build (the card ran at 50 MHz "high speed", every poll tried SDIO, SD and MMC) are these, on the F50 with a
+32 GB SDHC card (SL32G, manfid 0x000003), kernels built 2026-10-04:
+
+- 6.18.55: `mmc0 mmc1`; `mmcblk1` type `SD`, 62333952 sectors (29.7 GiB); "new high speed SDHC card" at 2.61 s;
+  50 MHz, 4 bits, timing "sd high-speed", 3.30 V. 64 MiB of random data written at offset 8 MiB with
+  `conv=fsync` in 4.0 s and read back with `iflag=direct` in 5.3 s; `cmp` equal. No `mmc1` line with crc,
+  timeout or error (the brief's `grep -ciE "crc|timeout.*mmc1"` counts 5, all of them "CPU features: CRC32" and
+  four "sprd-wlan: CRC value" lines).
+- The log with the card in: 4 `mmc1` lines, the same at 55 s, 89 s, 211 s and 313 s of uptime. The poll is silent:
+  the `mmc1` interrupt counter grew by 117 in 121 s (about one request a second), with no new log lines.
+- 7.2.9: the same 4 lines and deferral message, `mmcblk1` type `SD`, same size; 64 MiB written in 4.7 s, read in
+  4.8 s, `cmp` equal, no `mmc1` crc/timeout/error line; 64 interrupts in 67 s; `sdio_wifi` unbound.
+- 5.4 (release v2026.09.30's kernel): `mmc0 mmc1 mmc2` (the vendor driver also probes `sdio_wifi`);
+  `/dev/mmcblk1` and `/dev/mmcblk1p1`, type `SD`, 62333952 sectors. The vendor EIC driver gives the card detect
+  ("Got CD GPIO"), and the card runs as "ultra high speed SDR104" after tuning, at 23.75 s (the vendor modules
+  load late). That time did not come back: on the card installation (31k, "Kernel 5.4") seven boots had
+  `mmcblk1` at 3.40 to 3.63 s, well before init looks for it. Init still allows a card under 5.4 up to 30 s
+  instead of 8 when it waits at all (a host that waits for its card-detect line instead of polling).
+
+- That build, card pulled at 392 s of uptime: "mmc1: card aaaa removed", `/dev/mmcblk1*` gone, and the log stayed
+  at 5 `mmc1` lines from 419 s to 603 s.
+
+With the complete parse (6.18.55 #4 and 7.2.9 #4), booted without a card: `mmc0 mmc1`, no `/dev/mmcblk1`,
+`cd-gpios` gone from `/proc/device-tree/.../sdio@22210000`. Both kernels logged five "mmc1: Got command interrupt
+0x00000001 (or 0x00020000) even though no command operation was in progress" with an SDHCI register dump each
+(Cmd 0x371a = CMD55, 0x081a = CMD8; Resp[0] 0xffffffff), all between 5 s and 28 s of uptime: 91 `mmc1` lines.
+The count then stayed at 91 at 68, 130, 192 and 253 s (6.18) and 69, 131, 192 and 254 s (7.2). The empty slot's
+poll costs about 19 `mmc1` interrupts a second (6.18: 3516 in 184 s; 7.2: 3513 in 184 s); `top` showed 100 % and
+96 % idle.
+
+With the card in at boot (both #4 kernels): "new UHS-I speed SDR104 SDHC card" at 2.45 s (6.18) and 2.44 s (7.2),
+`ios` 208 MHz, 4 bits, timing "sd uhs SDR104", signal 1.80 V (`vddsdio` reads 1800000 uV), 4 `mmc1` lines and none
+of the "Got command interrupt" dumps: those come from the empty slot. 64 MiB at offset 8 MiB, twice each, `cmp`
+equal, no `mmc1` crc/timeout/error/busy line: 6.18 write 3.78 s and 3.72 s (16.9 and 17.2 MiB/s), read 2.49 s and
+2.38 s (25.7 and 26.9 MiB/s); 7.2 write 3.70 s and 3.72 s (17.3 and 17.2 MiB/s), read 2.37 s and 2.60 s (27.0 and
+24.6 MiB/s). Against the half-parse build's high speed mode: reads about twice as fast, writes about the same.
+
+A card inserted while 6.18 #4 ran (booted without it) was found by the poll: "new UHS-I speed SDR104 SDHC card" at
+279.3 s of uptime. It never became usable: about 2.3 s after each detection "Card stuck being busy!
+__mmc_poll_for_busy", "tried to HW reset card, got error -110", "mmcblk1: unable to read partition table", "card
+aaaa removed", and 0.4 s later the next detection. 14 detections in 37 s (279 s to 316 s), 156 `mmc1` lines by
+306 s; `/dev/mmcblk1*` present only between a detection and its removal. After the last removal `ios` showed
+400 kHz, 1 bit, legacy, 3.30 V while `vddsdio` read 1800000 uV. A reboot with the card in gave the working SDR104
+card above.
+
+### 31k. The Linux filesystem on the SD card
+Measured on the F50 with the same SL32G card (29.7 GiB, 62331871 sectors in `mmcblk1p1`) on 2026-10-04/05, with
+the installer of this branch, the 6.18.55 #4 bundle and the v2026.10.08 root filesystems, Ubuntu 24.04 and OpenWrt
+on the card, the earlier installation still in the internal region.
+
+- **Formatting.** Android's `/system/bin/mke2fs` (1.46.2) with `-b 4096 -m 0` and one inode per 256 KiB for this
+  card (about 121000 inodes; the ratio grows with the card, up to 1 MiB, while at least 65536 inodes remain). The
+  format and the unpacking of both systems took about 70 s. Ubuntu 24.04 is 10790 tar entries and OpenWrt 1482,
+  so 65536 inodes still leave room for an `<os>.old` of each during an update. The default of one inode per 16 KiB
+  is millions of inodes on a 128 GB card; that is what kanoqwq found slow and failing there.
+- **Where it went.** The summary said `writes: SD card /dev/block/mmcblk1p1, boot_b, 32 bytes of misc`; the device
+  log `marked the internal installation: the SD card boots first`, and `/.mu300/root-on-sd` was in the internal
+  filesystem. Booted: `/run/mu300-root-dev` `/dev/mmcblk1p1`, `/mnt/mu300-disk` the card, Ubuntu's `findmnt /`
+  `/dev/mmcblk1p1[/ubuntu]` with `LABEL=mu300sd` in its fstab; the hotspot up in both systems; mobile data
+  connected (this test SIM carries traffic only through a VPN, so nothing further was tried there).
+- **Update.** `mu300-update boot` with a 6.18 bundle that has no `./features` refused (`this kernel bundle cannot
+  read the SD card, and this system runs from it; nothing was changed`, boot_b unchanged); with the `sdcard`
+  bundle it installed the 31 modules into both systems and the device booted from the card again.
+- **Reboots.** A loop rebooted OpenWrt on the card 19 times; 18 came back on the card and 1 hung (the 10th, below):
+  1 failure in 19. Of the 18, 17 came up undisturbed, each with the card found at 2.43 to 2.46 s ("new UHS-I speed
+  SDR104"), 0 `mmc1` error, timeout or crc lines, and SSH 106 s after the `reboot` (91 s of uptime); in the 12th
+  the cable was pulled and plugged back in while the board was starting, and the cold boot after that came up on
+  the card as well. None landed on the internal system. Two restarts from outside the loop (reboots meant for
+  another board on the same address) also came up on the card, as did the five reboots of the steps before the
+  loop.
+- **One boot hung.** The 10th reboot stopped at 15.09 s of uptime: init had found the card (`stage=sd-root
+  dev=/dev/mmcblk1p1` at 8.08 s), switched to OpenWrt at 8.13 s, procd had loaded `/etc/modules.d`, and the last
+  line in `console-ramoops` is `mali 23140000.gpu: GPU identified as 0x1 arch 9.0.9 r0p1 status 0`. A good boot
+  goes on with "No priority control manager is configured" 9 ms later. No panic, no oops, no watchdog reset. The
+  board then did not enumerate on USB (the hub port showed a connected device that was never enabled). After it
+  was powered again, LK started Android (slot b had `tries_remaining: 1`, not successful). It happened once in 19,
+  in the Mali driver's probe, long after the card was mounted, so it does not look like the card. It may be a hang
+  in the Mali driver under 6.18, or the power may have dropped at that moment (the board has no battery, and its
+  cable was found to need replugging later the same night). Which of the two is open.
+- **Uninstall.** Internal kept, card erased: `erased (/dev/block/mmcblk1p1)`, the internal `root-on-sd` marker
+  removed, the internal systems intact; `install.sh --check` then reported `existing mu300sd filesystem: no`.
+- **Without the card.** Pending: card-pull fallback. Not measured on the device yet (it needs the card pulled by
+  hand): neither the fallback to the internal system after the wait (`stage=sd-root-missing`) nor the way to Android
+  without an internal system. What exists is the design and the unit tests of the root selection
+  (`tests/test_boot_init.py`, RootSelect).
+- **Kernel 5.4.** Release v2026.10.08's 5.4 bundle with this branch's init in its generic ramdisk and `sdcard` in
+  `./features`, installed on the card system with `mu300-update kernel 5.4` (2026-10-05): 7 boots, 2 with the init
+  from before the longer wait and 5 with the one that has it, all from the card (`/run/mu300-root-dev`
+  `/dev/mmcblk1p1`, OpenWrt). `mmcblk1` at 3.40 to 3.63 s and `p1` at 3.43 to 5.35 s; the
+  vendor modules done at 10.23 to 11.00 s and `stage=sd-root dev=/dev/mmcblk1p1` at 11.65 to 12.49 s, so init found
+  the card on its first look and never waited; 0 `mmc1` error, timeout or crc lines in the five boots counted. The
+  wait that now runs past 8 s while a card may still be coming was checked against the live 5.4 sysfs: a card that
+  is set up stops it (`sd_coming` 1), a 5.4 host with no card device yet keeps it going (0). Back on 6.18.55 with
+  the same init: 2 boots from the card, `mmcblk1` at 2.46 and 2.47 s, `stage=sd-root` at 8.05 and 8.12 s.
+- **U30 Air.** No SD host at all: `/sys/class/mmc_host` holds `mmc0` only, `/sys/block` only `mmcblk0*` (Android,
+  stock kernel). `sd_probe` finds nothing, and the installers never ask.
+
 ## Updating on the device
 
 ### 32. Old kernels, an idle IPA, and an update that ended in Android

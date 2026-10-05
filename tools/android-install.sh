@@ -2,7 +2,10 @@
 # Device side of install.sh (runs as root on Android). Settings come from /data/local/tmp/mu300-install.env:
 #   OFF SIZE           free eMMC region (bytes) after the last GPT partition, as strings
 #   OFF_S SIZE_S       the same in 512-byte sectors (Android's mksh has 32-bit arithmetic: never compute with bytes)
-#   FORMAT=0|1         create the ext4 filesystem "mu300root" in that region
+#   SD_MODE=0|1 SD_DEV with SD_MODE=1 the filesystem (label mu300sd) is the SD card block device SD_DEV instead of
+#                      that region; OFF/SIZE are then not used
+#   INTERNAL_EXISTS=0|1  with SD_MODE=1: an internal mu300root exists at OFF/SIZE and gets the root-on-sd marker
+#   FORMAT=0|1         create the ext4 filesystem (mu300root in the region, mu300sd on the card)
 #   OSES="ubuntu openwrt"  systems to (re)install from /data/local/tmp/mu300-<os>.tar.gz
 #                      (plus mu300-vendor-<os>.tar.gz with the device's own vendor files for prebuilt images)
 #   WIPE_LEGACY=0|1    remove a first-generation Ubuntu that lives directly in the filesystem root
@@ -18,7 +21,106 @@ T=/data/local/tmp
 . $T/mu300-install.env
 M=$T/mu300root
 say() { echo "[device] $*"; }
+# --- sd begin
+sd_ext4() {  # true when the device holds an ext4 filesystem, labelled or not
+    [ "$(dd if="$1" bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')" = 53ef ]
+}
+sd_label() {  # the ext4 label of a device, empty when it is not ext4 or has none
+    sd_ext4 "$1" || return 0
+    dd if="$1" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\000'
+}
+sd_disk() {  # sd_disk DEV: the disk of a partition (mmcblk1p1 -> mmcblk1); a whole disk stays as it is
+    case $1 in *mmcblk[0-9]*p[0-9]*) echo "${1%p*}" ;; *) echo "$1" ;; esac
+}
+sd_check() {  # sd_check DEV: DEV must be on an SD card, never on the eMMC this Android runs from
+    case $1 in
+        */mmcblk0|*/mmcblk0p*) say "refusing $1: that is the internal eMMC, not the SD card"; return 1 ;;
+    esac
+    d=$(sd_disk "$1")
+    # the MMC core names the card type: SD for a memory card (the eMMC says MMC, a Wi-Fi chip SDIO)
+    t=$(cat "${MU300_SYSFS:-/sys}/block/${d##*/}/device/type" 2>/dev/null) || t=
+    [ "$t" = SD ] || { say "refusing $1: not an SD card (type '$t')"; return 1; }
+}
+sd_release() {  # sd_release DEV: make Android let go of the card; nothing has been written when this fails
+    # no answer from the volume manager is no proof that Android has let go: refuse
+    vols=$(sm list-volumes 2>/dev/null) || { say "cannot ask Android about its volumes (sm list-volumes failed)"; return 1; }
+    # adopted as internal storage, in any state: encrypted, and part of Android's data. Android's own data
+    # partition is the line "private mounted null" (no colon), which is not a card.
+    echo "$vols" | grep -q '^private:[^ ]* ' && {
+        say "the SD card is adopted as Android internal storage; format it as portable storage first"; return 1; }
+    # only the card: public:179,N (179 is the MMC block major); a USB stick (public:8,N) is not ours to touch
+    for v in $(echo "$vols" | sed -n 's/^\(public:179,[^ ]*\) mounted.*/\1/p'); do
+        say "asking Android to unmount $v"
+        sm unmount "$v" 2>/dev/null || true
+    done
+    vols=$(sm list-volumes 2>/dev/null) || { say "cannot ask Android about its volumes (sm list-volumes failed)"; return 1; }
+    if echo "$vols" | grep -q '^public:179,[^ ]* mounted'; then
+        say "Android keeps the SD card mounted; eject it under Settings > Storage and run the installer again"; return 1
+    fi
+    # anything still mounted from the card's own nodes (any of its partitions). vold mounts the card through
+    # /dev/block/vold/public:179,N, so this only catches mounts made by hand: the sm check above is the real
+    # guard. A whole-card DEV (mmcblk1) stays as it is, so the eMMC (mmcblk0) can never match.
+    d=$(sd_disk "$1")
+    for m in $(sed -n -e "s|^$d \([^ ]*\) .*|\1|p" -e "s|^${d}p[0-9][0-9]* \([^ ]*\) .*|\1|p" \
+            "${MU300_MOUNTS:-/proc/mounts}" 2>/dev/null); do
+        umount "$m" 2>/dev/null || umount -f "$m" 2>/dev/null || true
+    done
+}
+sd_prepare() {  # sd_prepare DEV FORMAT: create mu300sd, or check that it is there
+    label=$(sd_label "$1")
+    if [ "$2" = 1 ]; then
+        # any other ext4, with or without a label, is someone's Linux data; FAT, exFAT or a blank card is not
+        if sd_ext4 "$1" && [ "$label" != mu300sd ]; then
+            say "refusing to format: foreign ext4 (${label:-no label}) on the SD card"; return 1
+        fi
+        # Android's own mke2fs, not a busybox one that su's PATH may find first. Its default of one inode per
+        # 16 KiB is millions of inodes on a big card, and writing their tables is what made 128 GB cards slow and
+        # fail (kanoqwq). So fewer: the ratio doubles up to 1 MiB while at least 65536 inodes remain (the two
+        # systems, each with an old copy during an update, use about 25000). awk: the byte count is past mksh's
+        # 32-bit arithmetic.
+        mk=/system/bin/mke2fs; [ -x $mk ] || mk=mke2fs
+        s=$(cat "${MU300_SYSFS:-/sys}/class/block/${1##*/}/size" 2>/dev/null) || s=0
+        i=$(awk -v s="${s:-0}" 'BEGIN { i = 16384; while (i < 1048576 && s * 512 / (i * 2) >= 65536) i *= 2; print i }')
+        say "creating ext4 mu300sd on $1 (one inode per $((i / 1024)) KiB)"
+        $mk -t ext4 -F -b 4096 -m 0 -i "$i" -L mu300sd "$1" >/dev/null
+    elif [ "$label" != mu300sd ]; then
+        say "no mu300sd filesystem on $1 (run with FORMAT=1)"; return 1
+    fi
+}
+sd_fstab() {  # sd_fstab ROOT: Ubuntu remounts / by label; on the card that label is mu300sd
+    [ -f "$1/etc/fstab" ] || return 0
+    # not sed -i: the same file content, written back in place (keeps its owner and mode)
+    sed 's|^LABEL=mu300root |LABEL=mu300sd |' "$1/etc/fstab" > "$1/etc/fstab.mu300" &&
+        cat "$1/etc/fstab.mu300" > "$1/etc/fstab" && rm -f "$1/etc/fstab.mu300"
+}
+# A device with an internal installation as well: tell its init that the card is what should boot (it then waits
+# for the card instead of taking the internal system at once). Best effort - the card boots without it whenever
+# the SD host is quick enough - so it always returns 0, also under set -e.
+sd_mark_internal() {
+    [ "${SD_MODE:-0}" = 1 ] && [ -n "${OFF:-}" ] && [ "${INTERNAL_EXISTS:-0}" = 1 ] || return 0
+    I=$T/mu300root-internal
+    MU300_OFF=$OFF MU300_SIZE=$SIZE sh $T/android-mount-mu300root.sh $I >/dev/null 2>&1 || return 0
+    # true, not ':': a failed redirection on a special builtin like ':' ends a POSIX shell (dash) outright
+    if mkdir -p $I/.mu300 2>/dev/null && true > $I/.mu300/root-on-sd 2>/dev/null; then
+        say "marked the internal installation: the SD card boots first"
+    fi
+    sync; sh $T/android-mount-mu300root.sh -u $I >/dev/null 2>&1 || true
+}
+# An installation into the internal filesystem: a root-on-sd left there by an earlier card installation no longer
+# says what should boot (init would wait for a card first), so it goes.
+sd_unmark() {  # sd_unmark ROOT
+    [ "${SD_MODE:-0}" = 1 ] || rm -f "$1/.mu300/root-on-sd"
+}
+# --- sd end
 
+if [ "${SD_MODE:-0}" = 1 ]; then
+    [ -b "${SD_DEV:?SD_DEV is not set}" ] || { say "no block device $SD_DEV (is the SD card inserted?)"; exit 1; }
+    sd_check "$SD_DEV" || exit 1
+    sd_release "$SD_DEV" || exit 1
+    sd_prepare "$SD_DEV" "$FORMAT" || exit 1
+    MU300_SD_DEV=$SD_DEV sh $T/android-mount-mu300root.sh $M
+    trap 'sync; sh $T/android-mount-mu300root.sh -u $M >/dev/null 2>&1; true' EXIT
+else
 # --- the region must not overlap any partition (checked again here, on the device itself)
 end=0
 for p in /sys/block/mmcblk0/mmcblk0p*; do
@@ -54,6 +156,7 @@ fi
 
 MU300_OFF=$OFF MU300_SIZE=$SIZE sh $T/android-mount-mu300root.sh $M
 trap 'sync; sh $T/android-mount-mu300root.sh -u $M >/dev/null 2>&1; true' EXIT
+fi
 
 if [ "$WIPE_LEGACY" = 1 ] && { [ -x $M/lib/systemd/systemd ] || [ -L $M/lib ]; }; then
     say "removing the root-level Ubuntu"
@@ -127,6 +230,7 @@ for os in $OSES; do
     fi
     rm -rf $M/$os && mv $M/$os.new $M/$os
     R=$M/$os
+    if [ "${SD_MODE:-0}" = 1 ]; then sd_fstab $R; fi
     mkdir -p $R/etc/mu300
     if [ -n "$ssid" ] && ! { [ "${UPDATE:-0}" = 1 ] && [ -s $R/etc/mu300/hotspot.conf ]; }; then
         umask 077
@@ -145,6 +249,7 @@ for os in $OSES; do
     rm -f $tarball
 done
 mkdir -p $M/.mu300
+sd_unmark $M
 echo "$BOOT_OS" > $M/.mu300/boot-os
 case ${BOOT_ATTEMPTS:-} in [1-6]) echo "$BOOT_ATTEMPTS" > $M/.mu300/boot-attempts ;; esac
 case ${KERNEL:-5.4} in
@@ -154,5 +259,6 @@ esac
 rm -f $M/boot/installed.tag
 [ -n "$ssid" ] && say "hotspot: SSID $ssid imported (passphrase ${#psk} chars)"
 say "installed: $(ls -d $M/ubuntu $M/openwrt 2>/dev/null | sed "s|$M/||g" | tr '\n' ' ')boot-os=$BOOT_OS default-linux=$DEFAULT_LINUX"
+sd_mark_internal
 rm -f $T/mu300-install.env
 echo MU300-INSTALL-OK   # install.sh checks for this line (set -e stops before it on any failure)

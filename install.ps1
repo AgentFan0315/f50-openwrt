@@ -16,7 +16,9 @@
     cannot hold every name the Android subset contains (the property area is a set of files called
     u:object_r:<context>:s0), so the archive from the device is kept beside it as work\android-subset\
     windows-source.tar.gz, and the tools that build the images take the subset from that file.
-    Only the Linux region, boot_b and 32 bytes of misc are written; boot_a, the GPT and userdata stay untouched.
+    Only the Linux region (or the SD card), boot_b and 32 bytes of misc are written; boot_a, the GPT and userdata
+    stay untouched. With an SD card in the slot it asks where the Linux filesystem goes ($env:MU300_STORAGE =
+    'internal' or 'sd' answers without asking).
 #>
 [CmdletBinding()]
 param(
@@ -425,16 +427,110 @@ if ($parts.Count -ne 2) { Die (T 'could not read the partition table from the de
 [int64]$OFF = $start * 512
 [int64]$SIZE = ($end - $start) * 512
 function Gib([int64]$b) { '{0:N1} GiB' -f ($b / 1GB) }
+# Where the Linux filesystem goes (tools/storage.sh's choose_storage). The caller asks; an empty answer is the
+# default (StorageDefault): internal storage; the card when there is too little room inside (the way that needs no
+# repartitioning) or when it holds an installation already (that is what the device starts).
+function StorageDefault([int64]$InternalBytes, [string]$SdState) {
+    if ($InternalBytes -lt 700MB -or $SdState -eq 'yes') { return 'sd' } else { return 'internal' }
+}
+function ChooseStorage([string]$SdDev, [int64]$SdBytes, [int64]$InternalBytes, [string]$Forced, [string]$Answer, [string]$SdState) {
+    if ($Forced -eq 'internal') { return 'internal' }
+    if ($Forced -eq 'sd') { if (-not $SdDev) { throw 'MU300_STORAGE=sd, but there is no usable SD card in the device' }; return 'sd' }
+    if ($Forced) { throw 'MU300_STORAGE must be internal or sd' }
+    if (-not $SdDev) { return 'internal' }
+    if (-not $Answer) { return (StorageDefault $InternalBytes $SdState) }
+    if ($Answer -eq 'internal' -or $Answer -eq 'sd') { return $Answer }
+    throw 'invalid choice'
+}
+# boot/init starts a mu300sd card before anything on the eMMC: an internal installation made while such a card is
+# in the slot never starts, so that choice needs the typed word (storage.sh's internal_over_card)
+function InternalOverCard([string]$Where, [string]$SdState) { return ($Where -eq 'internal' -and $SdState -eq 'yes') }
+# What the card holds, from the ext4 magic and label of its superblock: yes for a mu300sd filesystem, foreign for
+# any other ext4, labelled or not (someone's data: android-install.sh refuses to format it), no for anything else
+function SdState([string]$Magic, [string]$Label) {
+    if ($Magic -ne '53ef') { return 'no' }
+    if ($Label.Trim() -eq 'mu300sd') { return 'yes' }
+    return 'foreign'
+}
+# A card installation needs a kernel that reads the card (tools/storage.sh's sd_kernel_ok): the mainline bundles
+# that do say so in ./features; older ones gate the SD host off and the device would never find its card.
+function SdKernelOk([int]$SdMode, [string]$Dir) {
+    if ($SdMode -ne 1) { return $true }
+    $f = Join-Path $Dir 'features'
+    return [bool]((Test-Path $f) -and (@(Get-Content $f) -contains 'sdcard'))
+}
+# mu300-install.env, what android-install.sh is told (tools/storage.sh's write_install_env writes the same text).
+# OFF/SIZE and their sectors are always the internal region: in SD mode SIZE is the card's by now and INT_SIZE keeps
+# the region's, which the root-on-sd marker needs; the card's own size is read on the device.
+function InstallEnvText($v) {
+    [int64]$rs = if ([int]$v.SD_MODE -eq 1) { $v.INT_SIZE } else { $v.SIZE }
+    [int64]$off = $v.OFF
+    $lines = @("OFF=$off", "SIZE=$rs", "OFF_S=$([math]::Floor($off / 512))", "SIZE_S=$([math]::Floor($rs / 512))",
+        "FORMAT=$($v.FORMAT)", "OSES=`"$(@($v.OSES) -join ' ')`"", "WIPE_LEGACY=$($v.WIPE_LEGACY)", "UPDATE=$($v.UPDATE)",
+        "BOOT_OS=$($v.BOOT_OS)", "DEFAULT_LINUX=$($v.DEFAULT_LINUX)", "BOOT_ATTEMPTS=$($v.BOOT_ATTEMPTS)",
+        "IMPORT_HOTSPOT=$($v.IMPORT_HOTSPOT)", "KERNEL=$($v.KERNEL)", "SD_MODE=$($v.SD_MODE)", "SD_DEV=$($v.SD_DEV)",
+        "INTERNAL_EXISTS=$($v.INTERNAL_EXISTS)", "PWHASH='$($v.PWHASH)'")
+    return (($lines -join "`n") + "`n")
+}
+function SdExisting {
+    $m = (SuDo "dd if=$SD_DEV bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1") -replace '\s', ''
+    $l = (SuDo "dd if=$SD_DEV bs=1 skip=1144 count=16 2>/dev/null") -replace '\0', ''
+    SdState $m $l
+}
 # What each choice needs: the installed systems measure ~320 MiB (OpenWrt) and ~580 MiB (Ubuntu), and an update
 # keeps the previous one as <os>.old while the new one is unpacked, so allow for two of each plus working room.
 [int64]$NEED_OPENWRT = 800MB; [int64]$NEED_UBUNTU = 1600MB; [int64]$NEED_BOTH = 2400MB
 Write-Host (T 'eMMC: {1} ({2} sectors), partitions end at {3} (sector {4}), free after them: {5}' (Gib ($disk * 512)) $disk (Gib ($lastEnd * 512)) $lastEnd (Gib $SIZE))
+# The SD card as the other place for it (boot/init looks there first): "<block device> <512-byte sectors> <type>"
+# of the first mmc disk that is not the eMMC - its first partition when it has one, the whole card otherwise. The
+# type keeps a second eMMC or an SDIO function out. Single quotes only (see the data check below).
+$SD_DEV = ''; [int64]$SD_BYTES = 0
+$sd = @((SuDo 'for b in /sys/block/mmcblk[1-9]; do [ -e $b/device/type ] || continue; n=${b##*/}; if [ -e $b/${n}p1 ]; then echo /dev/block/${n}p1 $(cat $b/${n}p1/size) $(cat $b/device/type); else echo /dev/block/$n $(cat $b/size) $(cat $b/device/type); fi; break; done').Trim() -split '\s+')
+if ($sd.Count -eq 3 -and $sd[2] -eq 'SD' -and $sd[1] -match '^[0-9]+$') {
+    if ([int64]$sd[1] * 512 -ge 700MB) { $SD_DEV = $sd[0]; $SD_BYTES = [int64]$sd[1] * 512 }
+    else { Write-Host (T 'SD card present but smaller than 700 MiB; not used') }
+}
+$SD_MODE = 0; $sdEx = 'no'
+if ($Check) {
+    if ($SD_DEV) {
+        $sdEx = SdExisting
+        Write-Host (T 'SD card: {1}, {2}, existing mu300sd filesystem: {3}' $SD_DEV (Gib $SD_BYTES) (T $(if ($sdEx -eq 'yes') { 'yes' } else { 'no' })))
+        if ($sdEx -eq 'foreign') { Write-Host ('  ' + (T 'the SD card holds another Linux (ext4) filesystem; the installer will not format it')) }
+    }
+} else {
+    $ans = ''
+    if ($SD_DEV) { $sdEx = SdExisting }
+    if ($SD_DEV -and -not $env:MU300_STORAGE) {
+        $ans = Ask (T 'Where should the Linux filesystem go: internal storage or the SD card ({1}, {2})? (internal/sd)' $SD_DEV (Gib $SD_BYTES)) (StorageDefault $SIZE $sdEx)
+    }
+    try { $where = ChooseStorage $SD_DEV $SD_BYTES $SIZE ([string]$env:MU300_STORAGE) $ans $sdEx }
+    catch { Die (T $_.Exception.Message) }
+    if (InternalOverCard $where $sdEx) {
+        Write-Host (T 'The SD card ({1}) holds a Linux installation (mu300sd), and the device always starts that one first: an installation to internal storage does not start while this card is in the slot.' $SD_DEV)
+        Write-Host (T 'Take the card out before the device restarts, or erase its installation first with the uninstaller.')
+        if ((Ask (T 'Type internal to install to internal storage anyway') 'no') -ne 'internal') { Die (T 'cancelled') }
+    }
+    if ($where -eq 'sd') {
+        $SD_MODE = 1
+        # Another Linux filesystem on the card may be someone's data, and the device refuses to format it. Say so
+        # now, not after the password, the download and the build.
+        if ($sdEx -eq 'foreign') {
+            Die ((T 'the SD card ({1}) holds another Linux (ext4) filesystem, and the installer never formats one that is not its own (mu300sd).' $SD_DEV) + "`n" + (T 'Copy off what you need and format the card elsewhere, use another card, or install to internal storage (MU300_STORAGE=internal).'))
+        }
+    }
+}
 # Smaller eMMC variants leave less room behind userdata, and how much is needed depends on the choice further
 # down - OpenWrt alone fits in a few hundred megabytes. So refuse only what cannot hold anything at all, and
 # check the real requirement once the systems are known. There is nowhere else to put this region on these
 # devices: userdata is metadata-encrypted (dm-default-key), so an image file inside it cannot be read from
 # Linux, and the spare-looking blackbox and fulldumpdb partitions are written by the firmware itself.
-if ($SIZE -lt 700MB) {
+if ($SD_MODE -eq 0 -and $SIZE -lt 700MB) {
+    # -Check with a card: a real run offers the card (as the default) and needs no repartitioning
+    if ($Check -and $SD_DEV -and $sdEx -ne 'foreign') {
+        Write-Host (T 'result: {1}' (T 'too little free eMMC space for Linux; the installer will offer the SD card instead (no repartitioning needed)'))
+        Write-Host ("`n" + (T 'Nothing was written. Android version: {1}' (SuDo 'getprop ro.build.display.id')))
+        exit 0
+    }
     $mib = [int64]($SIZE / 1MB)
     Die ((T 'only {1} MiB of free space after the last partition: this device has a different layout, nothing is changed.' $mib) + "`n" + (T 'Please report the numbers above (eMMC size and where the partitions end); they identify the variant.'))
 }
@@ -449,9 +545,15 @@ foreach ($cand in @($OFF, 27762098176)) {
     }
 }
 Write-Host (T 'Linux region: offset {1}, {2}, existing mu300root filesystem: {3}' $OFF (Gib $SIZE) (T $existing))
+$INTERNAL_EXISTS = $(if ($existing -eq 'yes') { 1 } else { 0 }); [int64]$INT_SIZE = 0
+if ($SD_MODE -eq 1) {
+    # from here on SIZE and existing describe the card; OFF and INT_SIZE keep the internal region for the marker
+    $INT_SIZE = $SIZE; $SIZE = $SD_BYTES; $existing = SdExisting
+    Write-Host (T 'Linux filesystem: SD card {1}, {2}, existing mu300sd filesystem: {3}' $SD_DEV (Gib $SIZE) (T $existing))
+}
 
 $dirty = 0
-if ($existing -eq 'no') {
+if ($SD_MODE -eq 0 -and $existing -eq 'no') {
     $step = [int64]($SIZE / 1MB / 16)
     $probe = (0..15 | ForEach-Object { [int64]($OFF / 1MB) + $_ * $step }) -join ' '
     # Empty is 0x00 or 0xFF (what an eMMC reads back after an erase). No double quotes in the command: Windows
@@ -467,6 +569,8 @@ if ($existing -eq 'no') {
 }
 if ($existing -eq 'yes') {
     $verdict = T 'OK: a MU300 Linux installation is already present (it can be kept or replaced)'
+} elseif ($SD_MODE -eq 1) {
+    $verdict = T 'OK: the SD card will be formatted; everything on it is erased'
 } elseif ($dirty -gt 0) {
     $verdict = T 'WARNING: the unpartitioned space is not empty; it may be used by this firmware. Installing overwrites it'
 } elseif ($SIZE -ge 20GB) {
@@ -580,6 +684,9 @@ if ($existing -eq 'no') {
     }
     if ($FORMAT -eq 0 -and $OSES -contains 'ubuntu') { $WIPE_LEGACY = 1 }
 }
+if ($SD_MODE -eq 1 -and $FORMAT -eq 1) {
+    if ((Ask (T 'Everything on the SD card ({1}, {2}) will be erased. Type ERASE to continue' $SD_DEV (Gib $SIZE)) 'no') -ne 'ERASE') { Die (T 'cancelled') }
+}
 if ($script:AnswerQueue) {
     $p1 = NextAnswer (T 'Password for the "ubuntu" user (Ubuntu) and "root" (OpenWrt)') -Secret
     $p2 = NextAnswer (T 'Repeat') -Secret
@@ -670,6 +777,9 @@ if ($KERNEL -ne '5.4') {
     if ($DEVICE -ne 'f50' -and -not ((Test-Path "$KMAIN\devices") -and ((Get-Content "$KMAIN\devices") -match "\b$DEVICE\b"))) {
         Die (T 'release {1} does not support this device yet; use a newer one' $Release)
     }
+    if (-not (SdKernelOk $SD_MODE $KMAIN)) {
+        Die (T 'the {1} kernel of release {2} cannot read the SD card: choose kernel 5.4, a newer release, or internal storage (MU300_STORAGE=internal)' $KERNEL $Release)
+    }
 }
 
 Say (T 'Adding the vendor files from your device to the images')
@@ -707,9 +817,14 @@ $sysText = ($OSES -join ' ') + $(if ($OSES -contains 'ubuntu') { " (Ubuntu $UBUN
 Write-Host ('  ' + (T 'systems:        {1} (boots: {2})' $sysText $BOOT_OS))
 Write-Host ('  ' + (T 'kernel:         {1}' "$KERNEL$(if ($KMAIN) { " (mainline, $((Get-Content "$KMAIN\kernel.release").Trim()))" })"))
 Write-Host ('  ' + (T 'default boot:   {1}' $(if ($DEFAULT_LINUX -eq 1) { T 'Linux (Android after {1} failed boots in a row)' $BOOT_ATTEMPTS } else { T 'Android, Linux on demand' })))
-Write-Host ('  ' + (T 'filesystem:     {1}' $(if ($FORMAT -eq 1) { T 'CREATE new ext4 (erases the Linux region)' } else { T 'keep existing' })))
+$fsText = if ($FORMAT -eq 0) { T 'keep existing' } elseif ($SD_MODE -eq 1) { T 'CREATE new ext4 (erases the SD card)' } else { T 'CREATE new ext4 (erases the Linux region)' }
+Write-Host ('  ' + (T 'filesystem:     {1}' $fsText))
 if ($UPDATE -eq 1) { Write-Host ('  ' + (T 'update:         settings and user data of the chosen systems are kept, everything else is replaced')) }
-Write-Host ('  ' + (T 'writes:         Linux region at offset {1}, boot_b, 32 bytes of misc (boot_a, GPT and userdata are not touched)' $OFF))
+if ($SD_MODE -eq 1) {
+    Write-Host ('  ' + (T 'writes:         SD card {1}, boot_b, 32 bytes of misc (the eMMC region, boot_a, GPT and userdata are not touched)' $SD_DEV))
+} else {
+    Write-Host ('  ' + (T 'writes:         Linux region at offset {1}, boot_b, 32 bytes of misc (boot_a, GPT and userdata are not touched)' $OFF))
+}
 if ((Ask (T 'Type INSTALL to continue') 'no') -ne 'INSTALL') { Die (T 'cancelled') }
 
 Say (T 'Copying to the device')
@@ -719,10 +834,10 @@ foreach ($os in $OSES) {
     & adb push "$Work\mu300-vendor-$os.tar.gz" "$T/mu300-vendor-$os.tar.gz" | Out-Null
 }
 $envFile = "$Work\mu300-install.env"
-$lines = @("OFF=$OFF", "SIZE=$SIZE", "OFF_S=$($OFF / 512)", "SIZE_S=$($SIZE / 512)", "FORMAT=$FORMAT",
-    "OSES=`"$($OSES -join ' ')`"", "WIPE_LEGACY=$WIPE_LEGACY", "UPDATE=$UPDATE", "BOOT_OS=$BOOT_OS", "DEFAULT_LINUX=$DEFAULT_LINUX", "BOOT_ATTEMPTS=$BOOT_ATTEMPTS",
-    "IMPORT_HOTSPOT=$IMPORT_HOTSPOT", "KERNEL=$KERNEL", "PWHASH='$PWHASH'")
-WriteUnix $envFile (($lines -join "`n") + "`n")
+WriteUnix $envFile (InstallEnvText @{ OFF = $OFF; SIZE = $SIZE; INT_SIZE = $INT_SIZE; FORMAT = $FORMAT; OSES = $OSES
+    WIPE_LEGACY = $WIPE_LEGACY; UPDATE = $UPDATE; BOOT_OS = $BOOT_OS; DEFAULT_LINUX = $DEFAULT_LINUX
+    BOOT_ATTEMPTS = $BOOT_ATTEMPTS; IMPORT_HOTSPOT = $IMPORT_HOTSPOT; KERNEL = $KERNEL; SD_MODE = $SD_MODE
+    SD_DEV = $SD_DEV; INTERNAL_EXISTS = $INTERNAL_EXISTS; PWHASH = $PWHASH })
 & adb push $envFile "$T/mu300-install.env" | Out-Null
 Remove-Item $envFile
 $log = SuDo "sh $T/android-install.sh"
