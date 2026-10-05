@@ -1928,7 +1928,17 @@ from Android with mu300-linux is exactly that. The generic ramdisk segment, whic
 device segment, now carries an empty `etc/mu300-trial-guard` (a later file replaces an earlier one), and an
 experiment's guard goes into a segment of its own behind the generic one.
 
-### 33i. Two devices restored from one backup
+### 33i. A reboot "with the hotspot off" that never brought it back
+
+Reported: after rebooting from mu300-toolkit because the hotspot was on, SSH was gone. The toolkit's "join a
+network" offers exactly that reboot when the radio is the access point (this driver cannot turn an AP back into a
+station), and `wifi-client scan-mode on` left `/etc/mu300/wifi-scan-mode` in place until a network was joined: the
+hotspot stayed off at that boot and at every boot after, and whoever had come in over it had no way back but USB.
+The flag is now taken at boot into `/run` (mu300-wifi-scan-mode.service), for that boot only, a transient timer
+brings the hotspot back after 10 minutes when nothing was joined, and the toolkit says before the reboot that a
+session over the hotspot ends there and where to come back. Newer-release notes at login came in the same change.
+
+### 33j. Two devices restored from one backup
 
 A second F50 restored from the first one's backup came up with the same `androidboot.serialno` (the bootloader
 reads it from the restored data), so 33b's gadget identity was the same on both: the same USB serial number and
@@ -1946,7 +1956,7 @@ a new network adapter once - macOS sets up a new interface by itself (measured o
 and a computer that kept a setting for the old adapter (a fixed address, a firewall rule by MAC) has to be told about
 the new one.
 
-### 33j. Vendor driver fixes from the U30 Air test, measured
+### 33k. Vendor driver fixes from the U30 Air test, measured
 
 Before and after on the U30 Air (the "before" being the kernels of the overnight test), per boot:
 
