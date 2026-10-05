@@ -8,6 +8,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tarfile
 import unittest
 
 from helpers import BIN, TOP, ShellTest
@@ -27,6 +28,11 @@ case $1 in
     *) exit 1 ;;
 esac
 exec "{sys.executable}" -c "import importlib.util,sys; sys.path.insert(0,'{TOP}/tests'); from test_boot_image import unlz4_legacy; s=importlib.util.spec_from_file_location('b','{TOP}/boot/build-boot-image.py'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); open(sys.argv[2],'wb').write($f(open(sys.argv[1],'rb').read()))" "$2" "$3"
+'''
+
+# the same, but compress ends the frame with the uncompressed size, as Magisk's lz4_lg does
+MAGISKBOOT_SIZE_WORD = f'''"$STUBLOG/stubs/magiskboot" "$@" || exit 1
+case $1 in compress=*) exec "{sys.executable}" -c "import os,struct,sys; open(sys.argv[2],'ab').write(struct.pack('<I', os.path.getsize(sys.argv[1])))" "$2" "$3" ;; esac
 '''
 
 
@@ -90,9 +96,9 @@ class DeviceSide(ShellTest):
         super().setUp()
         self.stub('magiskboot', MAGISKBOOT)
 
-    def lib(self, shell, code, **env):
+    def lib(self, shell, code, magiskboot='magiskboot', **env):
         pre = f'MU300_LIB=1 . "{BIN}/mu300-update"; . "{LIB}"; '
-        return self.sh(shell, pre + code, MAGISKBOOT=self.stubs / 'magiskboot', **env)
+        return self.sh(shell, pre + code, MAGISKBOOT=self.stubs / magiskboot, **env)
 
     def test_blocks_equal_the_python_builders(self):
         want = dict(zip(('slot-a', 'slot-b-trial', 'slot-b', 'slot-a-trial'),
@@ -152,48 +158,58 @@ class DeviceSide(ShellTest):
                 self.assertFalse([n for n in names if n.rstrip('/') in ('lib', 'usr', 'usr/lib', 'opt', 'opt/mu300')])
                 shutil.rmtree(self.tmp / 's'); shutil.rmtree(self.tmp / 'fw')
 
-    @unittest.skipIf(not HAVE_LZ4, 'no lz4')
-    def test_whole_image_holds_what_the_python_builder_puts_in(self):
-        # one set of inputs: Android's root, its boot image and misc, the modules and tools of a kernel bundle
-        root = self.tmp / 'root'
-        fake_android_root(root)
-        stock, misc = self.tmp / 'stock.img', self.tmp / 'misc.bin'
-        fake_stock(stock)
-        fake_misc(misc)
-        mods, bundle = self.tmp / 'modules', self.tmp / 'bundle'
-        mods.mkdir(); bundle.mkdir()
+    def bundle_inputs(self):
+        """one set of inputs: Android's root, its boot image and misc, a kernel bundle (Image and generic segment)
+        built from fake modules and tools; returns the builder's command line arguments they share"""
+        self.root = self.tmp / 'root'
+        fake_android_root(self.root)
+        self.stock, self.misc = self.tmp / 'stock.img', self.tmp / 'misc.bin'
+        fake_stock(self.stock)
+        fake_misc(self.misc)
+        mods, self.bundle = self.tmp / 'modules', self.tmp / 'bundle'
+        mods.mkdir(); self.bundle.mkdir()
         for n in (TOP / 'boot' / 'module-order.txt').read_text().split():
             (mods / n).write_bytes(b'\x7fELF base ' + n.encode())
         for f in ('busybox', 'logdw'):
             (self.tmp / f).write_bytes(b'\x7fELF ' + f.encode())
-        (bundle / 'Image').write_bytes(b'\x7fkernel' * 1000)
-        common = ['--modules', str(mods), '--busybox', str(self.tmp / 'busybox'), '--logdw', str(self.tmp / 'logdw'),
-                  '--ueventd-perms', str(TOP / 'android-vendor' / 'ueventd-perms.sh')]
-        builder = [sys.executable, str(TOP / 'boot' / 'build-boot-image.py')]
-        r = subprocess.run(builder + ['--generic-ramdisk', '--out', str(bundle / 'ramdisk-generic.lz4')] + common,
-                           capture_output=True, text=True)
+        (self.bundle / 'Image').write_bytes(b'\x7fkernel' * 1000)
+        self.common = ['--modules', str(mods), '--busybox', str(self.tmp / 'busybox'),
+                       '--logdw', str(self.tmp / 'logdw'), '--ueventd-perms', str(TOP / 'android-vendor' / 'ueventd-perms.sh')]
+        self.builder = [sys.executable, str(TOP / 'boot' / 'build-boot-image.py')]
+        r = subprocess.run(self.builder + ['--generic-ramdisk', '--out', str(self.bundle / 'ramdisk-generic.lz4')] +
+                           self.common, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    def device_image(self, shell, magiskboot='magiskboot'):
+        """the device side, as the installer does it: work/dev.lz4 and work/out/{new,vbmeta,newfooter}"""
+        work = self.tmp / 'work'
+        shutil.rmtree(work, ignore_errors=True)
+        seg, out = work / 'seg', work / 'out'
+        seg.mkdir(parents=True); out.mkdir()
+        r = self.lib(shell, f'mkdir -p "{seg}/etc" && echo f50 > "{seg}/etc/mu300-device" && '
+                            f'echo b > "{seg}/etc/mu300-linux-slot" && bc_files {LIVE_A.hex()} "{seg}/etc" && '
+                            f'collect_subset "{TOP}/android-vendor/subset-files.txt" "{seg}/android" && '
+                            f'device_segment "{seg}" "{work}/dev.lz4" && '
+                            f'linux_boot_image "{self.stock}" "{self.bundle}" "{work}/dev.lz4" "{out}"',
+                     magiskboot=magiskboot, MU300_ANDROID_ROOT=self.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((work / 'dev.lz4.cpio').exists())
+        return work
+
+    @unittest.skipIf(not HAVE_LZ4, 'no lz4')
+    def test_whole_image_holds_what_the_python_builder_puts_in(self):
+        self.bundle_inputs()
+        bundle = self.bundle
         for shell in self.each_shell():
-            work = self.tmp / 'work'
-            shutil.rmtree(work, ignore_errors=True)
+            work = self.device_image(shell)
             seg, out = work / 'seg', work / 'out'
-            seg.mkdir(parents=True); out.mkdir()
-            # the device side, as the installer does it
-            r = self.lib(shell, f'mkdir -p "{seg}/etc" && echo f50 > "{seg}/etc/mu300-device" && '
-                                f'echo b > "{seg}/etc/mu300-linux-slot" && bc_files {LIVE_A.hex()} "{seg}/etc" && '
-                                f'collect_subset "{TOP}/android-vendor/subset-files.txt" "{seg}/android" && '
-                                f'device_segment "{seg}" "{work}/dev.lz4" && '
-                                f'linux_boot_image "{stock}" "{bundle}" "{work}/dev.lz4" "{out}"',
-                         MU300_ANDROID_ROOT=root)
-            self.assertEqual(r.returncode, 0, r.stderr)
             # the same on a computer, with the subset the device collected
             py = work / 'py.img'
-            r = subprocess.run(builder + ['--stock-boot', str(stock), '--misc-head', str(misc),
-                                          '--kernel', str(bundle / 'Image'),
-                                          '--append-ramdisk', str(bundle / 'ramdisk-generic.lz4'),
-                                          '--device', 'f50', '--linux-slot', 'b',
-                                          '--android-subset', str(seg / 'android'), '--out', str(py)] + common,
+            r = subprocess.run(self.builder + ['--stock-boot', str(self.stock), '--misc-head', str(self.misc),
+                                               '--kernel', str(bundle / 'Image'),
+                                               '--append-ramdisk', str(bundle / 'ramdisk-generic.lz4'),
+                                               '--device', 'f50', '--linux-slot', 'b',
+                                               '--android-subset', str(seg / 'android'), '--out', str(py)] + self.common,
                                capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
 
@@ -202,6 +218,14 @@ class DeviceSide(ShellTest):
             self.assertEqual(got, leaves(cpio_all(unlz4_legacy(ramdisk_of(pyimg)))))
             self.assertTrue(got['android/vendor/bin/modem_control'][1], 'modem_control is not executable')
             self.assertEqual(got['etc/mu300-device'][2], b'f50\n')
+
+            # the kernel does not create the parents of what it unpacks: the device segment names every one
+            devseg = cpio_files(unlz4_legacy((work / 'dev.lz4').read_bytes()))
+            dirs = {n for n, (m, _) in devseg.items() if stat.S_ISDIR(m)}
+            for n in devseg:
+                parts = n.split('/')
+                for i in range(1, len(parts)):
+                    self.assertIn('/'.join(parts[:i]), dirs, n)
 
             # the header page: Android's, with this kernel's and ramdisk's sizes and the marker the switch looks for
             ksz, rsz = struct.unpack_from('<II', new, 8)
@@ -217,6 +241,91 @@ class DeviceSide(ShellTest):
             self.assertEqual(struct.unpack_from('>QQQ', foot, 12), (len(new), len(new), vbs))
             self.assertEqual(foot[:12] + foot[36:], pyimg[-64:-52] + pyimg[-28:])
 
+    @unittest.skipIf(not HAVE_LZ4, 'no lz4')
+    def test_a_size_word_behind_the_frame_does_not_hide_the_generic_segment(self):
+        # in front of the generic segment, the kernel would read a trailing size word as a chunk size
+        self.stub('magiskboot-lg', MAGISKBOOT_SIZE_WORD)
+        self.bundle_inputs()
+        generic = cpio_files(unlz4_legacy((self.bundle / 'ramdisk-generic.lz4').read_bytes()))
+        for shell in self.each_shell():
+            work = self.device_image(shell, 'magiskboot-lg')
+            files = cpio_all(unlz4_legacy(ramdisk_of((work / 'out' / 'new').read_bytes())))
+            self.assertEqual(files['init'][1], (TOP / 'boot' / 'init').read_bytes())
+            for n in generic:
+                self.assertIn(n, files)
+            self.assertIn('android/vendor/bin/modem_control', files)
+            self.assertEqual(files['etc/mu300-device'][1], b'f50\n')
+
+    def test_device_segment_refuses_a_bad_frame_and_leaves_no_copy(self):
+        d = self.tmp / 'd'
+        (d / 'etc').mkdir(parents=True)
+        (d / 'etc' / 'x').write_bytes(b'proprietary')
+        # no whole chunk behind the magic; a frame that does not give back the cpio
+        self.stub('mb-short', 'case $1 in compress=*) printf "\\002\\041\\114\\030\\377\\000\\000\\000ab" > "$3" ;; esac')
+        self.stub('mb-wrong', 'case $1 in compress=*) printf "\\002\\041\\114\\030\\002\\000\\000\\000ab" > "$3" ;; '
+                              'decompress) printf other > "$3" ;; esac')
+        for shell in self.each_shell():
+            for mb, why in (('mb-short', 'no whole LZ4 chunk'), ('mb-wrong', 'does not decompress')):
+                r = self.lib(shell, f'device_segment "{d}" "{self.tmp}/seg.lz4"', magiskboot=mb)
+                self.assertNotEqual(r.returncode, 0, mb)
+                self.assertIn(why, r.stderr)
+                self.assertEqual([p.name for p in self.tmp.glob('seg.lz4*')], [], mb)
+
+    def gpu_root(self):
+        root = self.tmp / 'groot'
+        paths = ['vendor/lib64/libOpenCL.so', 'vendor/lib64/egl/libGLES_mali.so', 'system/lib64/libc.so']
+        for p in paths:
+            (root / p).parent.mkdir(parents=True, exist_ok=True)
+            (root / p).write_bytes(b'gpu ' + p.encode())
+        lst = self.tmp / 'gpu-files.txt'
+        lst.write_text('# a header\n' + '\n'.join(paths) + '\n')
+        return root, lst, paths
+
+    def test_collect_gpu_all_or_nothing(self):
+        root, lst, paths = self.gpu_root()
+        g = self.tmp / 'gpu'
+        for shell in self.each_shell():
+            r = self.lib(shell, f'collect_gpu "{lst}" "{g}"', MU300_ANDROID_ROOT=root)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            for p in paths:
+                self.assertEqual((g / p).read_bytes(), b'gpu ' + p.encode())
+            (root / paths[1]).rename(self.tmp / 'gone')
+            r = self.lib(shell, f'collect_gpu "{lst}" "{g}"', MU300_ANDROID_ROOT=root)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertFalse(g.exists())
+            (self.tmp / 'gone').rename(root / paths[1])
+
+    def test_vendor_overlay_gpu_files(self):
+        root = self.tmp / 'root'
+        fake_android_root(root)
+        g = self.tmp / 'gpu'
+        (g / 'vendor/lib64').mkdir(parents=True)
+        (g / 'vendor/bin').mkdir(parents=True)
+        (g / 'vendor/lib64/libOpenCL.so').write_bytes(b'opencl')
+        (g / 'vendor/bin/modem_control').write_bytes(b'not the subset one')
+        out = self.tmp / 'v.tar.gz'
+        pre = (f'collect_subset "{TOP}/android-vendor/subset-files.txt" "{self.tmp}/s" && '
+               f'collect_firmware "{self.tmp}/fw" && ')
+        for shell in self.each_shell():
+            r = self.lib(shell, pre + f'vendor_overlay ubuntu "{self.tmp}/fw" "{self.tmp}/s" "{g}" "{out}"',
+                         MU300_ANDROID_ROOT=root, MU300_FW_DIRS=f'{root}/vendor/firmware')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with tarfile.open(out) as t:
+                files = {m.name.lstrip('./'): t.extractfile(m).read() for m in t.getmembers() if m.isreg()}
+            self.assertEqual(files['opt/mu300/android/vendor/lib64/libOpenCL.so'], b'opencl')
+            # the subset's file wins
+            self.assertEqual(files['opt/mu300/android/vendor/bin/modem_control'], b'data vendor/bin/modem_control')
+            self.assertFalse(list(self.tmp.glob('v.tar.gz.*')))
+            # a GPU file that cannot be copied fails the overlay (here its directory is a file of the subset), and
+            # leaves neither the archive nor the copies behind
+            bad = self.tmp / 'gpu-bad'
+            (bad / 'vendor/bin/modem_control').mkdir(parents=True)
+            (bad / 'vendor/bin/modem_control/x').write_bytes(b'x')
+            r = self.lib(shell, pre + f'vendor_overlay ubuntu "{self.tmp}/fw" "{self.tmp}/s" "{bad}" "{out}"',
+                         MU300_ANDROID_ROOT=root, MU300_FW_DIRS=f'{root}/vendor/firmware')
+            self.assertNotEqual(r.returncode, 0)
+            self.assertFalse(list(self.tmp.glob('v.tar.gz*')))
+            shutil.rmtree(bad); shutil.rmtree(self.tmp / 's'); shutil.rmtree(self.tmp / 'fw')
 
 if __name__ == '__main__':
     unittest.main()
