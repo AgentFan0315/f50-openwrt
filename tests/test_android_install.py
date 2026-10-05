@@ -1,5 +1,6 @@
 """tools/android-install.sh: the SD card branch, cut out between its markers and run with stubs for Android's
 tools (sm, mke2fs, umount) and files standing in for block devices."""
+import os
 import re
 import shutil
 
@@ -267,3 +268,66 @@ class SdCard(ShellTest):
     def test_unmark_runs_on_the_installed_filesystem(self):
         self.assertIn('\nsd_unmark $M\n', SRC)
         self.assertLess(SRC.index('mkdir -p $M/.mu300\n'), SRC.index('\nsd_unmark $M\n'))
+
+
+class Extras(ShellTest):
+    """the extras block: pushed mu300-extra-<name>.tar.gz go onto the Linux partition, and an update of a system that
+    uses the VPN with the engines of its (older) image keeps them as the vpn extra"""
+
+    def setUp(self):
+        super().setUp()
+        m = re.search(r'# --- extra begin\n(.*?)# --- extra end', SRC, re.S)
+        self.assertIsNotNone(m, 'android-install.sh has no extra block')
+        self.fn = m.group(1)
+        self.m = self.tmp / 'mu300root'
+        (self.m / 'ubuntu/etc/mu300').mkdir(parents=True)
+
+    def run_fn(self, shell, call):
+        code = 'set -e\nsay() { echo "[device] $*"; }\n' + f'T="{self.tmp}"\nM="{self.m}"\n' + self.fn + f'\n{call}\necho "rc=$?"'
+        return self.sh(shell, code)
+
+    def test_pushed_extra_is_installed(self):
+        from test_extra import extra_tarball
+        for shell in self.each_shell():
+            shutil.rmtree(self.m / 'extra', ignore_errors=True)
+            extra_tarball(self.tmp / 'mu300-extra-vpn.tar.gz', release='v2026.10.10')
+            r = self.run_fn(shell, 'extra_from_push $M')
+            self.assertIn('rc=0', r.stdout, r.stderr)
+            self.assertEqual((self.m / 'extra/vpn/release').read_text().strip(), 'v2026.10.10')
+            self.assertTrue(os.access(self.m / 'extra/vpn/bin/xray', os.X_OK))
+            self.assertFalse((self.tmp / 'mu300-extra-vpn.tar.gz').exists())
+            # a broken push is skipped, never the install
+            (self.tmp / 'mu300-extra-vpn.tar.gz').write_bytes(b'junk')
+            r = self.run_fn(shell, 'extra_from_push $M')
+            self.assertIn('rc=0', r.stdout, r.stderr)
+            self.assertIn('skipped', r.stdout)
+            self.assertEqual((self.m / 'extra/vpn/release').read_text().strip(), 'v2026.10.10')
+            # nothing pushed: nothing happens
+            r = self.run_fn(shell, 'extra_from_push $M')
+            self.assertIn('rc=0', r.stdout, r.stderr)
+
+    def test_update_keeps_the_engines_of_a_vpn_in_use(self):
+        old = self.m / 'ubuntu'
+        b = old / 'opt/mu300/bin'
+        b.mkdir(parents=True, exist_ok=True)
+        for e in ('xray', 'hev-socks5-tunnel', 'sing-box'):
+            (b / e).write_text('#!/bin/sh\n')
+            (b / e).chmod(0o755)
+        (old / 'etc/mu300/image-version').write_text('v2026.10.06\n')
+        for shell in self.each_shell():
+            for enable, kept in (('0', False), ('1', True)):
+                shutil.rmtree(self.m / 'extra', ignore_errors=True)
+                (old / 'etc/mu300/vpn.conf').write_text(f'ENABLE={enable}\n')
+                r = self.run_fn(shell, 'extra_keep_vpn $M $M/ubuntu')
+                self.assertIn('rc=0', r.stdout, r.stderr)
+                self.assertEqual((self.m / 'extra/vpn/bin/sing-box').exists(), kept, enable)
+            self.assertEqual((self.m / 'extra/vpn/release').read_text().strip(), 'v2026.10.06')
+            # an extra that is there (pushed, or installed earlier) is not replaced
+            (self.m / 'extra/vpn/release').write_text('v2026.10.10\n')
+            r = self.run_fn(shell, 'extra_keep_vpn $M $M/ubuntu')
+            self.assertEqual((self.m / 'extra/vpn/release').read_text().strip(), 'v2026.10.10')
+
+    def test_order_in_the_install(self):
+        self.assertIn('\nextra_from_push $M\n', SRC)
+        # the engines are taken before the old system is removed
+        self.assertLess(SRC.index('extra_keep_vpn $M $M/$os'), SRC.index('rm -rf $M/$os && mv $M/$os.new $M/$os'))

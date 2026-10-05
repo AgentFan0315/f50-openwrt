@@ -777,6 +777,13 @@ class Install(InstallerCase):
         self.assertFalse((self.fake.root / 'sdcard/mu300-linux-password.txt').exists())
         self.assertEqual(self.work_dirs(), [])                                 # proprietary staging gone
 
+    def test_report_names_the_vpn_extra(self):
+        # the zip carries no VPN engines (they are the vpn extra since mu300-extra): the report says how to add them
+        r = self.run_installer()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('The VPN (mu300-vpn) needs the vpn extra: Xray and sing-box.', r.stdout)
+        self.assertIn('sudo mu300-extra install vpn', r.stdout)
+
     def test_slot_b_android(self):
         self.device(slot='_b')
         r = self.run_installer()

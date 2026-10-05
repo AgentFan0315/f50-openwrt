@@ -648,6 +648,11 @@ if ($DEFAULT_LINUX -eq 1) {
 }
 $IMPORT_HOTSPOT = if ((Ask (T "Copy Android's hotspot name and password to Linux? (yes/no)") 'yes') -eq 'yes') { 1 } else { 0 }
 $gpu = Ask (T 'Include the Mali GPU (OpenCL) userspace (~90 MiB)? (yes/no)') 'yes'
+# the VPN engines are not part of the systems: an extra that goes onto the Linux partition only when wanted
+Write-Host ('  ' + (T 'The VPN (mu300-vpn) needs the vpn extra: Xray and sing-box. It can also be added later on the device:'))
+Write-Host '    sudo mu300-extra install vpn'
+$vx = Ask (T 'Install the VPN extra (about 40 MB more to download, 120 MB on the device)? (yes/no)') 'no'
+$EXTRA_VPN = $null
 $KERNEL = $null
 Say (T 'Which kernel?')
 Write-Host ('  ' + (T "1) 5.4   Unisoc's vendor kernel (Android 12 base): the longest tested, everything this project supports"))
@@ -746,6 +751,11 @@ foreach ($line in Get-Content "$REL\SHA256SUMS") {
 }
 $files = @('mu300-kernel.tar.gz') + ($OSES | ForEach-Object { RootfsFile $_ })
 if ($KERNEL -ne '5.4') { $files += "mu300-kernel-$KERNEL.tar.gz" }
+if ($vx -eq 'yes') {
+    # from the same release and SHA256SUMS; a release from before extras still has the engines in its images
+    if ($sums.ContainsKey('mu300-extra-vpn.tar.gz')) { $files += 'mu300-extra-vpn.tar.gz'; $EXTRA_VPN = "$REL\mu300-extra-vpn.tar.gz" }
+    else { Write-Host ('  ' + (T 'release {1} has no vpn extra: its systems still carry the VPN engines' $Release)) }
+}
 foreach ($f in $files) {
     if (-not $sums.ContainsKey($f)) {
         $why = if ($KERNEL -ne '5.4' -and $f -eq "mu300-kernel-$KERNEL.tar.gz") { ' ' + (T '(choose kernel 5.4, or a newer release)') } else { '' }
@@ -816,6 +826,7 @@ Write-Host ('  ' + (T 'source:         {1}' (T 'prebuilt release {1} + vendor fi
 $sysText = ($OSES -join ' ') + $(if ($OSES -contains 'ubuntu') { " (Ubuntu $UBUNTU)" } else { '' })
 Write-Host ('  ' + (T 'systems:        {1} (boots: {2})' $sysText $BOOT_OS))
 Write-Host ('  ' + (T 'kernel:         {1}' "$KERNEL$(if ($KMAIN) { " (mainline, $((Get-Content "$KMAIN\kernel.release").Trim()))" })"))
+Write-Host ('  ' + (T 'extras:         {1}' $(if ($EXTRA_VPN) { 'vpn' } else { T 'none' })))
 Write-Host ('  ' + (T 'default boot:   {1}' $(if ($DEFAULT_LINUX -eq 1) { T 'Linux (Android after {1} failed boots in a row)' $BOOT_ATTEMPTS } else { T 'Android, Linux on demand' })))
 $fsText = if ($FORMAT -eq 0) { T 'keep existing' } elseif ($SD_MODE -eq 1) { T 'CREATE new ext4 (erases the SD card)' } else { T 'CREATE new ext4 (erases the Linux region)' }
 Write-Host ('  ' + (T 'filesystem:     {1}' $fsText))
@@ -833,6 +844,8 @@ foreach ($os in $OSES) {
     & adb push "$REL\$(RootfsFile $os)" "$T/mu300-$os.tar.gz" | Out-Null
     & adb push "$Work\mu300-vendor-$os.tar.gz" "$T/mu300-vendor-$os.tar.gz" | Out-Null
 }
+# android-install.sh puts every pushed mu300-extra-<name>.tar.gz onto the Linux partition (extra/<name>)
+if ($EXTRA_VPN) { & adb push $EXTRA_VPN "$T/mu300-extra-vpn.tar.gz" | Out-Null }
 $envFile = "$Work\mu300-install.env"
 WriteUnix $envFile (InstallEnvText @{ OFF = $OFF; SIZE = $SIZE; INT_SIZE = $INT_SIZE; FORMAT = $FORMAT; OSES = $OSES
     WIPE_LEGACY = $WIPE_LEGACY; UPDATE = $UPDATE; BOOT_OS = $BOOT_OS; DEFAULT_LINUX = $DEFAULT_LINUX
