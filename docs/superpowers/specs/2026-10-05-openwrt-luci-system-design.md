@@ -106,7 +106,7 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K1 | rescue timer 300 s -> 90 s | c | - | user decision: 300 s stays |
 | K2 | slot detection from misc/cmdline, `restore_android`, persist log in `boot_<linux slot>` | x | - | Magisk branch (its "Opposite slot" tasks) |
 | K3 | the fork's own SD root scan (`mu300sd`) and mount-before-gadget order | c | - | superseded by our SD card work on this branch (294081a, 26b6890) |
-| K4 | `is_mu300root` through a loop device at the offset instead of `dd skip` | a | all | gate: `find_root_offset` takes > 0.5 s on a device (busybox `dd` may already seek; then there is nothing to win) |
+| K4 | `is_mu300root` through a loop device at the offset instead of `dd skip` | c | - | measured (FINDINGS 35): busybox `dd` seeks; the probe at the region offset takes 0.01-0.04 s on the F50 and under 0.08 s on the U30 Air, nothing to win |
 | K5 | early DHCP: `udhcpd` on the gadget's netdev right after binding, `killall udhcpd` before `switch_root` | a | all | lease 120 s, not 3600 (a host must not keep an early lease when the system's LAN differs from the default subnet) |
 | K6 | RNDIS as a single configuration with ACM, `bcdDevice 0x0302` | a | all | gate: Windows 10/11 host gets a network adapter (only with `MU300_USBNET=rndis`) |
 | K7 | USB mode policy read before the gadget is created | b | openwrt-luci | reshaped (D12): `etc/mu300/usb-net`, after `pick_root`, rebind only on difference |
@@ -119,7 +119,7 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K9 | `10-mu300-usb`: stop the early `udhcpd` on `lan` ifup, delete the LAN address from bridge ports that kept it, reattach `rndis0` | a | OpenWrt | with K5 |
 | K10 | `10-mu300-usb`: our macOS re-enumeration on LAN up removed | c | - | our fix for macOS' inactive link (FINDINGS); removed only if K12 passes its gate on macOS |
 | K11 | preinit `06_mu300_early_usb`: restart the early DHCP server in the real root | a | OpenWrt | fixed: the fork hard-codes 192.168.77.x, which is the F50's subnet, wrong on the U30 Air and with a custom LAN address; takes `uci get network.lan.ipaddr` or `mu300-lan-ip` |
-| K12 | `mu300-post`: one 100 ms gadget rebind (`mu300-usb-reset --fast-run`) once br-lan/dnsmasq are up, instead of `--if-no-lease 25` | a | OpenWrt | gate: macOS, Windows 11 and Linux hosts get a lease on 5 boots each without replugging |
+| K12 | `mu300-post`: one 100 ms gadget rebind (`mu300-usb-reset --fast-run`) once br-lan/dnsmasq are up, instead of `--if-no-lease 25` | c | - | gate not passed: shown on macOS only (10/10 boots, ping 24-27 s after reboot); no Windows 11 or Linux USB host could be measured (FINDINGS 35). The `usb-ready` instance is not started; the role check and configfs mount of K67 stay |
 | K13 | `mu300-post`: `usb1` into br-lan | a | OpenWrt | U30 Air's second function on some kernels |
 | K14 | `mu300-post`: the 45 s Wi-Fi retry removed | c | - | kept as a backstop: it acts only when the AP is not up; K15 makes it rare |
 | K15 | `mu300-hw`: `wifi down; wifi up` once the regulatory domain is live | a | OpenWrt | readiness-driven; fixes an AP stuck in AP-DISABLED from the world domain |
@@ -145,8 +145,8 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K35 | `mu300cell`: `renew` handler (SIGUSR1 to the monitor) | b | openwrt-luci | relay mode only (the monitor exists only there) |
 | K36 | `mu300cell-v6.sh` event monitor (netlink + `+CGEV`) | b | openwrt-luci | relay mode |
 | K37 | `ndp-learn` + `init.d/mu300-ndp` | b | openwrt-luci | relay mode; the init script does nothing unless `network.wan.ipv6` is `relay`. Only the bearer's /64 is routed to br-lan; the fork's per-neighbour /128 pins are rejected (a LAN client's spoofed neighbour advertisement pinned any address, the router's own or an internet host's, to br-lan). The br-lan /64 has metric 128, below the carrier RA's metric-256 route for the same /64 on sipa_eth0, so NAT66 replies reach the clients (review I2; a metric-1024 route from an earlier ndp-learn is removed). With NDP relay off (K30) nothing makes a /128 from the LAN either; the device phase checks that a client's stable SLAAC address answers `curl -6` with no /128 present, and that a spoofed NS leaves no off-prefix /128 |
-| K38 | `mu300-led-events` (`ubus listen`: WAN and hostapd state -> LEDs) | a | OpenWrt | reworked onto `mu300-led` (D10) |
-| K39 | `www/.../view/system/leds.js`: LuCI LED page with the two lamp switches | b | openwrt-luci | writes `/etc/mu300/led.conf` through `mu300-led` instead of uci |
+| K38 | `mu300-led-events` (`ubus listen`: WAN and hostapd state -> LEDs) | x | - | f50-leds-fixes (FINDINGS 34 there): the F50 lamp states follow `mobile-data`/`mu300-led wifi sync`; an event loop of the fork waits for that branch |
+| K39 | `www/.../view/system/leds.js`: LuCI LED page with the two lamp switches | x | - | waits for f50-leds-fixes: the lamp switches need its `mu300-led` (follow-up) |
 
 ### rootfs/overlay/opt/mu300/bin (shared by all three)
 
@@ -180,7 +180,7 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K65 | `mobile-data`: early lock replay hook of the plugin | b | openwrt-luci | inert without `/usr/libexec/unisoc-modem/lock` |
 | K66 | `mobile-data radio-on` subcommand | a | all | used by K20 |
 | K67 | `mu300-usb-reset`: no rebind in host role, mount configfs when init unmounted it, `--fast-run` | a | all | with K12 |
-| K68 | `led-status` (F50 RGB states, boot chase, Wi-Fi lamp, per-lamp switches) | a | all | D10: into `mu300-led`; gate: `mu300-led test` on the F50 shows which channel is white |
+| K68 | `led-status` (F50 RGB states, boot chase, Wi-Fi lamp, per-lamp switches) | x | - | f50-leds-fixes: blue 4G, white (green channel) 5G, red without service, Wi-Fi on `keyboard-backlight`, measured with an observer there; boot chase and switches are a follow-up |
 | K69 | `mu300-sms` + `mu300-smsd` (SMS pool) | b | openwrt-luci | D11 |
 
 ### The LuCI app, build, tools, tests
