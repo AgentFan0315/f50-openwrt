@@ -18,8 +18,8 @@
 #   KERNEL=5.4|6.18|7.2  the kernel in the new boot image; mu300-update keeps installing that one (boot/kernel)
 set -e
 # install.sh pushes everything to /data/local/tmp. The Magisk installer runs this as root from a directory only root
-# can write (MU300_WORK): files in /data/local/tmp can be replaced by the shell user after they were checked.
-T=${MU300_WORK:-/data/local/tmp}
+# can write (MU300_DEVICE_WORK): files in /data/local/tmp can be replaced by the shell user after they were checked.
+T=${MU300_DEVICE_WORK:-/data/local/tmp}
 . $T/mu300-install.env
 M=$T/mu300root
 say() { echo "[device] $*"; }

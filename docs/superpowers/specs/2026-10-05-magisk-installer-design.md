@@ -109,7 +109,7 @@ The child (`mu300-install.sh`) does, in this order, and writes nothing to the eM
    subset, the GPU closure), the vendor overlay tarballs `android-install.sh` already accepts, the four `misc`
    blocks, the device ramdisk segment, the boot image (`bootimg_from_stock`), the password hash.
 8. **Install the systems.** `tools/android-install.sh` with the same `mu300-install.env` `install.sh` writes, run
-   by Android's own `/system/bin/sh` and toybox (see "Safety"), from the work directory (`MU300_WORK`). Then the kernel bundle's modules go into every
+   by Android's own `/system/bin/sh` and toybox (see "Safety"), from the work directory (`MU300_DEVICE_WORK`). Then the kernel bundle's modules go into every
    system on the Linux filesystem (`mu300-update`'s function).
 9. **Boot image.** `write_boot` (from `mu300-update`) writes it to `boot_<linux slot>` and reads it back (sha256 of
    the image and of the AVB footer). On a mismatch it stops: `misc` is untouched and Android keeps booting.
@@ -237,7 +237,9 @@ to sleep. A chooser that times out to a default is the defaults with a delay, an
 
 The answers are `KEY=VALUE` lines (`#` comments, optional quotes, CRLF tolerated) in a file named
 `mu300-install.conf`. It is read line by line and only the keys below are taken; anything else is reported and
-ignored, a value is only ever assigned (never evaluated), and every value must be one of those listed.
+ignored, a value is only ever assigned (never evaluated), and every value must be exactly one of those listed. A
+value is checked when its line is read, before it is assigned (`MU300_LANG`, for one, is part of a file name as soon
+as it is set); a value that is not one of those stops the installer before anything happens.
 
 The installer runs as root, and `/sdcard` can be written by every app with storage access. So there are two kinds of
 file:
@@ -252,7 +254,11 @@ An untrusted file may only choose what destroys nothing and reveals nothing. A k
 is reported and ignored, and the installer prints the one command that turns the file into a trusted one:
 `su -c 'cp /sdcard/mu300-install.conf /data/adb/mu300-install.conf && chmod 600 /data/adb/mu300-install.conf'`.
 Untrusted files are read first, trusted ones after them, so a trusted value wins. The plan names the file every
-value came from.
+value came from. A trusted `MU300_SD_ERASE=yes` or `MU300_REGION_OVERWRITE=yes` may stay in `/data/adb` from an
+earlier install, so it counts only for storage the same trust chose: an erase of the card only with
+`MU300_STORAGE=sd` from a trusted file, or for a card that already holds `mu300sd` when no `MU300_STORAGE` is
+given; a region overwrite only with a trusted `MU300_STORAGE=internal` or without any `MU300_STORAGE`. Otherwise
+an untrusted `MU300_STORAGE=sd` would aim a standing erase at whatever card is in the slot.
 
 > Decision: two trust levels, with erasing, wiping, the region overwrite, the password, its file and the model
 > override only from a file only root can write. Rejected: honouring `/sdcard` for everything (any app with storage
@@ -285,8 +291,11 @@ installer; a card with another Linux filesystem is never offered for erasing.
 
 Every run, a refused one too (with what was known by then), writes `/sdcard/mu300-install.conf.example` with every
 key, its meaning, the value this run used and which keys need the trusted file, so the file never has to be typed
-from documentation. It is written only as a new file (an existing one, or a link someone put there, is removed
-first and never written through).
+from documentation. Any app can write `/sdcard`, so the file is never opened by its name: the text goes into a new
+file with a random name, created exclusively, which is then renamed over `mu300-install.conf.example` - a rename
+replaces whatever is at that name, a link someone put there included, instead of writing through it. (An exclusive
+open of the name itself is not enough: the shells' `set -C` opens an existing non-regular file, such as a link to a
+block device, without `O_EXCL`.)
 
 ## Passwords
 
@@ -336,7 +345,7 @@ The guarantees of `install.sh`/`android-install.sh`, kept, and how:
   install the replacement as root. Everything the installer checks and then uses - the payload copies, the copies
   of `android-install.sh` and the mount helper, `mu300-install.env`, the vendor tarballs, the mount points - lives
   in one directory made for this run with `mktemp -d` under `/data/adb` (mode 700). `android-install.sh` takes its
-  directory from `MU300_WORK` (default `/data/local/tmp`, so the computer installer, which pushes there over adb,
+  directory from `MU300_DEVICE_WORK` (default `/data/local/tmp`, so the computer installer, which pushes there over adb,
   is unchanged). The Magisk path reads and writes nothing in `/data/local/tmp`.
 
   > Decision: a fresh root-only directory per run. Rejected: a fixed `/data/local/tmp/mu300-magisk` (the shell user
@@ -354,6 +363,10 @@ The guarantees of `install.sh`/`android-install.sh`, kept, and how:
 * **Proprietary files never leave the device.** The work directory is deleted on every exit path (`trap`), apart
   from a filesystem still mounted in it; the CI audit (below) fails a zip that contains anything outside the
   allow-list.
+* **The manifest is checked before any path is made from it.** Every field must be exactly a value a release
+  has: the system, its Ubuntu release and its rootfs asset one of the three combinations, the kernel and its asset
+  one of the three, the checksums 64 lowercase hex digits, the tag a `v` tag without `/`, `..` or blanks. A
+  manifest with anything else is refused before the payload is touched.
 * **The payload is checked** against the manifest's sha256 before use; the manifest itself is inside the zip the
   user downloaded over HTTPS from the release, and `SHA256SUMS-magisk` lets them check the zip.
 

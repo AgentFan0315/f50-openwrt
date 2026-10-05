@@ -131,8 +131,8 @@ class Conf(ShellTest):
     def test_values_quotes_crlf_comments(self):
         for shell in self.each_shell():
             r = self.load(shell, '# a comment\r\nMU300_STORAGE=sd\r\nMU300_SD_ERASE="yes"\n  MU300_BOOT = android\n'
-                                 "MU300_PASSWORD='p a$s'\n", 'trusted')
-            self.assertIn("S=sd E=yes B=android P=p a$s", r.stdout)
+                                 "MU300_PASSWORD='p a$s 1'\n", 'trusted')
+            self.assertIn("S=sd E=yes B=android P=p a$s 1", r.stdout)
 
     def test_unknown_keys_are_reported_not_set(self):
         for shell in self.each_shell():
@@ -154,6 +154,22 @@ class Conf(ShellTest):
                 f = self.tmp / 'c.conf'; f.write_text(bad + '\n')
                 r = self.lib(shell, f'conf_load "{f}" trusted; conf_check')
                 self.assertNotEqual(r.returncode, 0, bad)
+
+    def test_values_are_checked_before_they_are_assigned(self):
+        # MU300_LANG is part of t()'s file name: a later message must not be read from a file it points at
+        evil = self.tmp / 'evil.tsv'
+        evil.write_text('mu300-install.conf: {1} is not a setting of this installer; ignored\tPWNED\n')
+        up = '../' * 12
+        for shell in self.each_shell():
+            for line in (f'MU300_LANG={up}{self.tmp}/evil', 'MU300_BOOT_OS=-rf', 'MU300_STORAGE=../sd',
+                         'MU300_LANG=tr x'):
+                r = self.load(shell, line + '\nBOGUS=1\n')
+                self.assertNotEqual(r.returncode, 0, line)
+                self.assertIn('is not valid', r.stdout, line)
+                self.assertNotIn('PWNED', r.stdout + r.stderr, line)
+            # from the environment too
+            r = self.lib(shell, 'conf_check', MU300_BOOT_OS='../x')
+            self.assertNotEqual(r.returncode, 0)
 
     def test_untrusted_file_chooses_nothing_destructive(self):
         # any app with storage access can write /sdcard: it may not erase, wipe, set the password or the model
@@ -238,7 +254,7 @@ class AndroidSide(ShellTest):
 
     def test_android_install_takes_its_directory_from_the_installer(self):
         # the Magisk installer's work directory, only root can write it; /data/local/tmp for install.sh
-        self.assertIn('\nT=${MU300_WORK:-/data/local/tmp}\n', (TOP / 'tools/android-install.sh').read_text())
+        self.assertIn('\nT=${MU300_DEVICE_WORK:-/data/local/tmp}\n', (TOP / 'tools/android-install.sh').read_text())
 
 
 @unittest.skipIf(not BUSYBOX, 'no busybox (the installer runs under Magisk\'s busybox)')
@@ -398,6 +414,50 @@ class Plan(InstallerCase):
         self.assertNotIn('hunter22', r.stdout)
         self.assertTrue(self.nothing_written())
 
+    def test_untrusted_storage_does_not_aim_a_standing_erase(self):
+        # an erase allowed in /data/adb long ago, and a card someone put into the slot: /sdcard cannot pick it
+        self.device(card=bytes(1 << 20), region=False)
+        r = self.run_installer(conf='MU300_STORAGE=sd\nMU300_DRY_RUN=1\n', trusted='MU300_SD_ERASE=yes\n')
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn('MU300_STORAGE=sd and MU300_SD_ERASE=yes', r.stdout)
+        self.assertTrue(self.nothing_written())
+        r = self.run_installer(conf='MU300_DRY_RUN=1\n', trusted='MU300_STORAGE=sd\nMU300_SD_ERASE=yes\n')
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn('CREATE new ext4', r.stdout)
+
+    def test_untrusted_storage_does_not_aim_a_standing_region_overwrite(self):
+        def dirty():
+            with open(self.fake.root / 'dev/block/mmcblk0', 'r+b') as f:
+                f.truncate(16 << 30)
+                start = ((2048 + (8 << 21)) // 4096 + 1) * 4096 * 512
+                f.seek(start + (512 << 10)); f.write(b'data' * 1024)
+        for conf, trusted, rc in (('MU300_STORAGE=internal\nMU300_DRY_RUN=1\n', 'MU300_REGION_OVERWRITE=yes\n', 1),
+                                  ('MU300_DRY_RUN=1\n', 'MU300_REGION_OVERWRITE=yes\n', 3),
+                                  ('MU300_DRY_RUN=1\n', 'MU300_STORAGE=internal\nMU300_REGION_OVERWRITE=yes\n', 3),
+                                  ('MU300_DRY_RUN=1\n', None, 1)):
+            self.device(); dirty()
+            r = self.run_installer(conf=conf, trusted=trusted)
+            self.assertEqual(r.returncode, rc, (conf, trusted, r.stdout + r.stderr))
+            if rc == 1:
+                self.assertIn('MU300_STORAGE=internal and MU300_REGION_OVERWRITE=yes', r.stdout)
+            self.assertTrue(self.nothing_written())
+
+    def test_manifest_fields_are_checked_before_any_path(self):
+        bad = {'ROOTFS_ASSET': '../../../etc/passwd', 'KERNEL_ASSET': '-mu300-kernel.tar.gz', 'OS': '../openwrt',
+               'TAG': 'v2026/../..', 'SYSTEM': 'openwrt x', 'KERNEL': '6.18/..', 'SHA256_ROOTFS': 'A' * 64,
+               'SHA256_KERNEL': '', 'UBUNTU': '24.04'}
+        good = (self.mu300 / 'manifest').read_text()
+        for k, v in bad.items():
+            lines = [l for l in good.splitlines() if not l.startswith(k + '=')] + [f'{k}={v}']
+            (self.mu300 / 'manifest').write_text('\n'.join(lines) + '\n')
+            r = self.run_installer(conf='MU300_DRY_RUN=1\n')
+            self.assertEqual(r.returncode, 1, (k, v, r.stdout + r.stderr))
+            self.assertIn('manifest', r.stdout, k)
+            self.assertNotIn('Unpacking', r.stdout, k)                    # refused before the payload is touched
+            self.assertTrue(self.nothing_written(), k)
+        (self.mu300 / 'manifest').write_text(good)
+        self.assertEqual(self.run_installer(conf='MU300_DRY_RUN=1\n').returncode, 3)
+
     def test_conf_others_can_change_is_not_trusted(self):
         trusted = 'MU300_STORAGE=sd\nMU300_SD_ERASE=yes\nMU300_DRY_RUN=1\n'
         for setup in (lambda: (self.fake.root / 'data/adb/mu300-install.conf').chmod(0o620),
@@ -511,6 +571,17 @@ class Plan(InstallerCase):
             self.assertIn(k, ex)
         self.assertRegex(ex, r'#MU300_SD_ERASE=yes +# \(root\)')       # which keys need the trusted file
         self.assertIn('data/adb/mu300-install.conf', ex)
+
+    def test_example_conf_is_never_written_through_a_link(self):
+        victim = self.tmp / 'victim'
+        victim.write_text('not yours')
+        ex = self.fake.root / 'sdcard/mu300-install.conf.example'
+        ex.symlink_to(victim)
+        self.assertEqual(self.run_installer(conf='MU300_DRY_RUN=1\n').returncode, 3)
+        self.assertEqual(victim.read_text(), 'not yours')
+        self.assertFalse(ex.is_symlink())
+        self.assertIn('MU300_STORAGE', ex.read_text())
+        self.assertEqual(sorted(p.name for p in ex.parent.iterdir()), ['mu300-install.conf', 'mu300-install.conf.example'])
 
     def test_example_conf_written_on_refusal(self):
         self.device(model='Pixel 7')

@@ -52,8 +52,8 @@ warn() { echo "! $*"; }
 die() { echo "! $*"; exit 1; }
 gib() { awk -v b="$1" 'BEGIN { printf "%.1f GiB", b / 1073741824 }'; }
 # Android's own shell and toolbox, never Magisk's standalone busybox: its mke2fs makes ext2 only and its losetup has
-# no -S. su -c sh gives install.sh exactly this environment. MU300_WORK tells android-install.sh where its files are.
-asw() { env -u ASH_STANDALONE PATH="$APATH" MU300_WORK="${W:-}" "$@"; }
+# no -S. su -c sh gives install.sh exactly this environment. MU300_DEVICE_WORK tells android-install.sh where its files are.
+asw() { env -u ASH_STANDALONE PATH="$APATH" MU300_DEVICE_WORK="${W:-}" "$@"; }
 su_do() { asw "$DEVSH" -c "$1"; }            # storage.sh's way to run a command on the device: here it is local
 
 android_lang() {  # the language of the Android locale: tr, zh or en
@@ -99,13 +99,21 @@ conf_load() {  # conf_load FILE [trusted]
         case $_v in \"*\") _v=${_v#\"}; _v=${_v%\"} ;; \'*\') _v=${_v#\'}; _v=${_v%\'} ;; esac
         case " $CONF_KEYS " in
             *" $_k "*)
+                # an empty value leaves the default; anything else must be exactly a value of that key before it is
+                # assigned - MU300_LANG, for one, is part of a file name the moment it is set
+                [ -n "$_v" ] || continue
+                if ! conf_valid "$_k" "$_v"; then
+                    [ "$_k" != MU300_PASSWORD ] || die "$(t 'mu300-install.conf: MU300_PASSWORD must have at least 6 characters')"
+                    die "$(t 'mu300-install.conf: {1}={2} is not valid' "$_k" "$_v")"
+                fi
                 if [ "$_tr" != trusted ] && conf_trusted_only "$_k" "$_v"; then
                     _kv=$_k; [ "$_k" != MU300_MODE ] || _kv=$_k=$_v        # never a password's value
                     warn "$(t 'mu300-install.conf: {1} is taken only from {2}, which only root can change; ignored in {3}' "$_kv" "$TRUSTED_CONF" "$_cf")"
                     _ign="$_ign $_k"
                 else
                     # $_k is one of CONF_KEYS: the eval is safe, and the value is assigned, never evaluated
-                    eval "$_k=\$_v; SRC_$_k=\$_cf"; _set="$_set $_k"
+                    _t=; [ "$_tr" != trusted ] || _t=1
+                    eval "$_k=\$_v; SRC_$_k=\$_cf; TRUST_$_k=\$_t"; _set="$_set $_k"
                 fi ;;
             *) warn "$(t 'mu300-install.conf: {1} is not a setting of this installer; ignored' "$_k")" ;;
         esac
@@ -131,26 +139,31 @@ conf_read() {  # every settings file there is, the untrusted ones first so that 
     conf_load "$D/mu300-install.conf" trusted
     [ -z "$_adb" ] || conf_load "$TRUSTED_CONF" trusted
 }
-conf_check() {  # every answer has a value this installer knows, or it stops before anything happens
-    _bad() { die "$(t 'mu300-install.conf: {1}={2} is not valid' "$1" "$2")"; }
-    case ${MU300_STORAGE:-} in ''|internal|sd) ;; *) _bad MU300_STORAGE "$MU300_STORAGE" ;; esac
-    case ${MU300_MODE:-} in ''|update|wipe) ;; *) _bad MU300_MODE "$MU300_MODE" ;; esac
-    case ${MU300_BOOT_OS:-} in ''|ubuntu|openwrt) ;; *) _bad MU300_BOOT_OS "$MU300_BOOT_OS" ;; esac
-    case ${MU300_BOOT:-} in ''|linux|android) ;; *) _bad MU300_BOOT "$MU300_BOOT" ;; esac
-    case ${MU300_BOOT_ATTEMPTS:-} in ''|[1-6]) ;; *) _bad MU300_BOOT_ATTEMPTS "$MU300_BOOT_ATTEMPTS" ;; esac
-    for _k in MU300_SD_ERASE MU300_REGION_OVERWRITE; do
-        eval "_v=\${$_k:-}"; case $_v in ''|yes) ;; *) _bad "$_k" "$_v" ;; esac
+conf_valid() {  # conf_valid KEY VALUE: VALUE is exactly one this installer knows for KEY
+    case $1 in
+        MU300_STORAGE) case $2 in internal|sd) return 0 ;; esac ;;
+        MU300_MODE) case $2 in update|wipe) return 0 ;; esac ;;
+        MU300_BOOT_OS) case $2 in ubuntu|openwrt) return 0 ;; esac ;;
+        MU300_BOOT) case $2 in linux|android) return 0 ;; esac ;;
+        MU300_BOOT_ATTEMPTS) case $2 in [1-6]) return 0 ;; esac ;;
+        MU300_SD_ERASE|MU300_REGION_OVERWRITE) [ "$2" = yes ] && return 0 ;;
+        MU300_HOTSPOT|MU300_GPU) case $2 in yes|no) return 0 ;; esac ;;
+        MU300_PASSWORD_FILE) [ "$2" = sdcard ] && return 0 ;;
+        MU300_DEVICE) case $2 in f50|u30air) return 0 ;; esac ;;
+        MU300_LANG) case $2 in en|tr|zh) return 0 ;; esac ;;
+        MU300_DRY_RUN) [ "$2" = 1 ] && return 0 ;;
+        # any characters: it only ever goes to mkpasswd on stdin, never into a path or a command line
+        MU300_PASSWORD) [ ${#2} -ge 6 ] && return 0 ;;
+    esac
+    return 1
+}
+conf_check() {  # every answer, from a file or the environment, has a value this installer knows
+    for _k in $CONF_KEYS; do
+        eval "_v=\${$_k:-}"
+        [ -z "$_v" ] || conf_valid "$_k" "$_v" && continue
+        [ "$_k" != MU300_PASSWORD ] || die "$(t 'mu300-install.conf: MU300_PASSWORD must have at least 6 characters')"
+        die "$(t 'mu300-install.conf: {1}={2} is not valid' "$_k" "$_v")"
     done
-    for _k in MU300_HOTSPOT MU300_GPU; do
-        eval "_v=\${$_k:-}"; case $_v in ''|yes|no) ;; *) _bad "$_k" "$_v" ;; esac
-    done
-    case ${MU300_PASSWORD_FILE:-} in ''|sdcard) ;; *) _bad MU300_PASSWORD_FILE "$MU300_PASSWORD_FILE" ;; esac
-    case ${MU300_DEVICE:-} in ''|f50|u30air) ;; *) _bad MU300_DEVICE "$MU300_DEVICE" ;; esac
-    case ${MU300_LANG:-} in ''|en|tr|zh) ;; *) _bad MU300_LANG "$MU300_LANG" ;; esac
-    case ${MU300_DRY_RUN:-} in ''|1) ;; *) _bad MU300_DRY_RUN "$MU300_DRY_RUN" ;; esac
-    if [ -n "${MU300_PASSWORD:-}" ] && [ ${#MU300_PASSWORD} -lt 6 ]; then
-        die "$(t 'mu300-install.conf: MU300_PASSWORD must have at least 6 characters')"
-    fi
 }
 src_of() { eval "_s=\${SRC_$1:-}"; if [ -n "$_s" ]; then echo "$_s"; else t 'default'; fi; }   # where a value came from
 
@@ -186,11 +199,31 @@ slot_setup() {
     bc_valid "$LIVE_BC" || die "$(t 'misc holds no valid boot control block; nothing was changed')"
     say "$(t 'Android runs from slot {1}; Linux goes to slot {2} (boot_{2})' "$ANDROID_SLOT" "$LINUX_SLOT")"
 }
+# The manifest names files and is part of paths (the payload entries, $W/mu300-$OS.tar.gz): every field must be
+# exactly one of the values a release has before anything is built from it - no "/", "..", leading "-" or blanks.
 manifest_load() {  # the zip's manifest, read like the conf file: only these keys
+    TAG= SYSTEM= OS= UBUNTU= KERNEL= KERNEL_ASSET= ROOTFS_ASSET= SHA256_KERNEL= SHA256_ROOTFS=
     while IFS='=' read -r _k _v; do
         case $_k in TAG|SYSTEM|OS|UBUNTU|KERNEL|KERNEL_ASSET|ROOTFS_ASSET|SHA256_KERNEL|SHA256_ROOTFS) eval "$_k=\$_v" ;; esac
     done < "$1"
-    [ -n "${OS:-}" ] && [ -n "${KERNEL:-}" ] && [ -n "${SHA256_ROOTFS:-}" ] || die "$(t 'the zip is incomplete (no manifest)')"
+    _ok=1
+    case $TAG in v[0-9]*) ;; *) _ok= ;; esac
+    case $TAG in *[!0-9A-Za-z._-]*|*..*) _ok= ;; esac
+    case $SYSTEM:$OS:$UBUNTU:$ROOTFS_ASSET in
+        openwrt:openwrt::mu300-openwrt-rootfs.tar.gz) ;;
+        ubuntu-24.04:ubuntu:24.04:mu300-ubuntu-rootfs.tar.gz) ;;
+        ubuntu-26.04:ubuntu:26.04:mu300-ubuntu-26.04-rootfs.tar.gz) ;;
+        *) _ok= ;;
+    esac
+    case $KERNEL:$KERNEL_ASSET in
+        5.4:mu300-kernel.tar.gz|6.18:mu300-kernel-6.18.tar.gz|7.2:mu300-kernel-7.2.tar.gz) ;;
+        *) _ok= ;;
+    esac
+    for _h in "$SHA256_KERNEL" "$SHA256_ROOTFS"; do
+        case $_h in *[!0-9a-f]*) _ok= ;; esac
+        [ ${#_h} = 64 ] || _ok=
+    done
+    [ -n "$_ok" ] || die "$(t 'the zip is incomplete or damaged (its manifest is not valid)')"
     OSES=$OS
 }
 # A directory of this run only, which only root can enter: the payload, the scripts that run as root, the settings
@@ -268,6 +301,15 @@ no_room_inside() {  # the refusal when Linux does not fit inside, with the way o
         die "$(t 'There is too little free space inside for Linux and no SD card. Insert a card (MU300_STORAGE=sd and MU300_SD_ERASE=yes in {1}), or make room with the installer for computers.' "$TRUSTED_CONF")"
     fi
 }
+# the storage an overwrite may hit was chosen by a trusted file, or by the installer itself (no MU300_STORAGE at
+# all): for the card that means it already holds this project's mu300sd
+aimed_by_trust() {  # aimed_by_trust sd|internal
+    if [ -n "${MU300_STORAGE:-}" ]; then
+        [ "$MU300_STORAGE" = "$1" ] && [ -n "${TRUST_MU300_STORAGE:-}" ]
+    else
+        [ "$1" = internal ] || [ "$sd_ex" = yes ]
+    fi
+}
 plan_storage() {
     region_probe || die "$(t 'could not read the partition table')"
     region_find_existing
@@ -296,8 +338,8 @@ $(t 'Take the card out and install the zip again, or install to the card (MU300_
         [ "$INT_SIZE" -ge $((700 * 1024 * 1024)) ] || no_room_inside
         if [ "$existing" = no ]; then
             region_dirty
-            [ "$DIRTY" = 0 ] || [ "${MU300_REGION_OVERWRITE:-}" = yes ] ||
-                die "$(t 'The free space behind the partitions is not empty ({1} of 16 samples hold data); it may be used by this firmware. To use it anyway, put MU300_REGION_OVERWRITE=yes into {2}, a file only root can change.' "$DIRTY" "$TRUSTED_CONF")"
+            [ "$DIRTY" = 0 ] || { [ "${MU300_REGION_OVERWRITE:-}" = yes ] && aimed_by_trust internal; } ||
+                die "$(t 'The free space behind the partitions is not empty ({1} of 16 samples hold data); it may be used by this firmware. To use it anyway, put MU300_STORAGE=internal and MU300_REGION_OVERWRITE=yes into {2}, a file only root can change.' "$DIRTY" "$TRUSTED_CONF")"
         fi
     fi
     INTERNAL_EXISTS=0; [ "$int_existing" = yes ] && INTERNAL_EXISTS=1
@@ -307,13 +349,14 @@ $(t 'Take the card out and install the zip again, or install to the card (MU300_
     else
         FORMAT=1
     fi
-    # a card is formatted only when a trusted file says MU300_SD_ERASE=yes, whatever the reason (a new card, or
-    # MU300_MODE=wipe on a mu300sd one); an untrusted file cannot set it
-    if [ "$SD_MODE" = 1 ] && [ "$FORMAT" = 1 ] && [ "${MU300_SD_ERASE:-}" != yes ]; then
-        if [ "$existing" = yes ]; then
+    # A card is formatted only when a trusted file says MU300_SD_ERASE=yes, whatever the reason (a new card, or
+    # MU300_MODE=wipe on a mu300sd one), and only when that same trust chose the card: a standing MU300_SD_ERASE=yes
+    # in /data/adb must not be aimed at whatever card is in the slot by a MU300_STORAGE=sd any app can write.
+    if [ "$SD_MODE" = 1 ] && [ "$FORMAT" = 1 ] && ! { [ "${MU300_SD_ERASE:-}" = yes ] && aimed_by_trust sd; }; then
+        if [ "$existing" = yes ] && [ "${MU300_SD_ERASE:-}" != yes ]; then
             die "$(t 'MU300_MODE=wipe formats the SD card ({1}, {2}): the installation on it and everything else is erased. To allow that, put MU300_SD_ERASE=yes into {3} as well.' "$SD_DEV" "$(gib "$SD_BYTES")" "$TRUSTED_CONF")"
         fi
-        die "$(t 'Installing to the SD card ({1}, {2}) erases everything on it. To allow that, put MU300_SD_ERASE=yes into {3}, a file only root can change.' "$SD_DEV" "$(gib "$SD_BYTES")" "$TRUSTED_CONF")"
+        die "$(t 'Installing to the SD card ({1}, {2}) erases everything on it. To allow that, put MU300_STORAGE=sd and MU300_SD_ERASE=yes into {3}, a file only root can change.' "$SD_DEV" "$(gib "$SD_BYTES")" "$TRUSTED_CONF")"
     fi
 }
 inspect_target() {  # which systems the existing filesystem holds, and its Ubuntu release: mounted read-only
@@ -363,10 +406,15 @@ plan_print() {
     echo "  $(t 'writes:         {1}, boot_{2}, 32 bytes of misc (boot_{3}, the partition table and userdata are not touched)' "$([ "$SD_MODE" = 1 ] && echo "$SD_DEV" || t 'the Linux region')" "$LINUX_SLOT" "$ANDROID_SLOT")"
 }
 # Every setting, what it does and the value this run used (or would have: a refused run writes it too, with what
-# was known by then), so nobody has to type it from a README. Never written through a link someone put there.
+# was known by then), so nobody has to type it from a README. Any app can write $SDCARD, so it is never opened by
+# its name: a new file with a random name is created exclusively and renamed over the target, and rename replaces
+# whatever is there (a link included) instead of writing through it.
 write_example() {
     _ex=$SDCARD/mu300-install.conf.example
-    rm -f "$_ex" 2>/dev/null
+    [ ! -d "$_ex" ] || [ -L "$_ex" ] || return 0
+    _rnd=$(head -c 8 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    _new=$SDCARD/.mu300-install.conf.example.$$.$_rnd
+    [ ! -e "$_new" ] && [ ! -L "$_new" ] || return 0
     ( set -C; {
         echo "# MU300 Linux Magisk installer settings. Copy to $SDCARD/mu300-install.conf, edit, install the zip again."
         echo "# Settings marked (root) are taken only from $TRUSTED_CONF, which only root can change: any app can write"
@@ -386,17 +434,21 @@ write_example() {
         echo "#MU300_DEVICE=${DEVICE:-f50}              # (root) f50 or u30air, only when the model is not recognised"
         echo "#MU300_LANG=${MU300_LANG:-en}                # en, tr or zh"
         echo "#MU300_DRY_RUN=1               # only show what would be done"
-    } > "$_ex" ) 2>/dev/null || true
+    } > "$_new" ) 2>/dev/null &&
+        [ -f "$_new" ] && [ ! -L "$_new" ] && rm -f "$_ex" && mv -f "$_new" "$_ex" 2>/dev/null
+    rm -f "$_new" 2>/dev/null
+    return 0
 }
 
 main() {
     trap cleanup EXIT
     [ -n "$MU300_LANG" ] || MU300_LANG=$(android_lang)
-    echo "MU300 Linux $(sed -n 's/^TAG=//p' "$D/manifest")"
+    conf_valid MU300_LANG "$MU300_LANG" || MU300_LANG=en      # it is part of a file name in t()
+    manifest_load "$D/manifest"
+    echo "MU300 Linux $TAG"
     conf_read
     conf_check
     env_check
-    manifest_load "$D/manifest"
     detect_device
     slot_setup
     work_setup
