@@ -203,7 +203,7 @@ copied from Android.
 | Check the mobile connection | `sudo mobile-data status` |
 | Set the APN | Ubuntu: `/etc/mu300/mobile-data.conf` (`MU300_APN`, `MU300_PDP_TYPE`). OpenWrt: LuCI → Network → Interfaces → wan, or `uci set network.wan.apn='…'; uci commit network; ifup wan`. Leave it empty to keep the context the SIM defines, which is what most carriers expect |
 | Change the Wi-Fi name or password | edit `/etc/mu300/hotspot.conf`, then `sudo systemctl restart mu300-hotspot` |
-| Connect the device to someone else's Wi-Fi | `sudo mu300-toolkit` → Network → Wi-Fi → "Join a network", or `sudo wifi-client scan` then `sudo wifi-client connect "NAME" "PASSWORD"` |
+| Connect the device to someone else's Wi-Fi | `sudo mu300-toolkit` → Network → Wi-Fi → "Join a network", or `sudo wifi-client scan` then `sudo wifi-client connect "NAME"` (it asks for the password); see [Wi-Fi client](#wi-fi-client) |
 | Update to the newest release | `sudo mu300-update check` then `sudo mu300-update apply`. The device looks for a new release at boot and every 6 hours and says so at login and in `mu300-toolkit`; it never installs one by itself |
 | Fixed TTL for mobile data (so the operator cannot tell hotspot traffic from the device's own) | `sudo mu300-ttl set 64` (`sudo mu300-ttl off` goes back to the default), or `mu300-toolkit` -> Network -> TTL |
 | Switch between OpenWrt and Ubuntu | `sudo mu300-os openwrt` / `sudo mu300-os ubuntu` |
@@ -380,6 +380,38 @@ copy and an update or reinstall of a system keeps it; `mu300-update apply` bring
 `mu300-extra list` shows what there is, `mu300-extra status` what is installed, `sudo mu300-extra remove vpn` takes it
 off again (turn the VPN off first; it refuses while the VPN is on). A device that used the VPN before the engines became an extra keeps it working: the update installs the
 vpn extra by itself (or keeps the engines of the old system), and `mu300-vpn` fetches it when it finds none.
+
+### Wi-Fi client
+
+The radio can join another Wi-Fi network instead of being the hotspot (one or the other: the SC2355 does one at a
+time). The device then uses that network for itself and shares it with its USB clients, as it does mobile data.
+
+```sh
+sudo wifi-client scan                    # the networks in range: signal, security, name
+sudo wifi-client connect "NAME"          # asks for the password; nothing is shown as you type
+sudo wifi-client status
+sudo wifi-client disconnect              # the hotspot comes back, and stays after a reboot
+sudo wifi-client reconnect               # join the saved network again
+sudo wifi-client forget                  # delete the saved network
+```
+
+* **Give the password when asked, not on the command line.** `sudo` writes the whole command line to the system
+  journal, so `sudo wifi-client connect "NAME" "PASSWORD"` leaves the password there (it still works, with a
+  warning). From a script, pipe it in with `-`: `printf '%s\n' "$PW" | sudo wifi-client connect "NAME" -`, or keep it
+  in a file only root can read and use `--password-file FILE`. The joined network and its password are saved in
+  `/etc/mu300/wifi-client.conf` (root only) and joined again at every boot.
+* **`disconnect` lasts**: the next boot keeps the hotspot too. `sudo wifi-client disconnect --keep` leaves the
+  network joined at the next boot; `reconnect` turns it back on.
+* **Joining needs the radio as a client**, which is decided at boot: while it is the hotspot, `connect` saves the
+  network and asks for a reboot (or use `mu300-toolkit`, which offers a reboot with the hotspot off to scan).
+* **WPA2 and WPA2/WPA3 mixed networks work; WPA3-only ones do not.** The scan labels them `WPA3` (`WPA2/3` is mixed
+  mode, joined as WPA2), and `connect` refuses them as soon as it sees one: this Wi-Fi driver has no SAE. Set the
+  router to WPA2/WPA3 mixed mode to join it. (A driver that has SAE is used with it.)
+* **Sharing**: Ubuntu turns on forwarding and masquerades on `wlan0` (nftables table `ip mu300_wifi_nat`, removed
+  on disconnect); nothing from the other network is let into the LAN but answers. OpenWrt adds `wlan0` to the
+  `wan` firewall zone, which masquerades and blocks incoming connections. With the [VPN](#vpn) on, clients still
+  go through the tunnel, and its kill switch covers `wlan0` as it does the modem.
+* The Wi-Fi route has metric 50 and mobile data 100, so with both the Wi-Fi is used and the SIM stays idle.
 
 ### Updating
 

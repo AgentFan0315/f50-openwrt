@@ -600,7 +600,10 @@ to start on (`ConditionPathExists=!`). Going back to the hotspot needs no reboot
 hostapd can do by itself.
 
 **WPA3/SAE does not work**: wpa_supplicant negotiates SAE correctly but every association is rejected with
-`status_code=1`, so Wi-Fi 7 / WPA3-only networks (a "MLO" SSID, for instance) cannot be joined. WPA2 works;
+`status_code=1`, so Wi-Fi 7 / WPA3-only networks (a "MLO" SSID, for instance) cannot be joined. The driver says so
+itself: `iw phy` lists `connect` but no `authenticate` command (the SME is in the firmware), and wpa_supplicant 2.10
+(built with SAE: `get_capability auth_alg` has it) leaves SAE out of `wpa_cli get_capability key_mgmt`. wifi-client
+asks that, and refuses a network whose every access point is SAE-only as soon as the supplicant's scan shows it. WPA2 works;
 measured on the device: 18 networks scanned, joined, DHCP address, and the Wi-Fi default route (metric 50) taking
 precedence over mobile data (metric 100).
 
