@@ -210,7 +210,8 @@ copied from Android.
 | Failed boots in a row before it falls back to Android (1-6, default 5) | `sudo mu300-next-boot attempts N` |
 | Go back to Android | `sudo mu300-next-boot android`, then `sudo reboot` |
 | Return to Linux from Android | `su -c mu300-linux` on the device (see below), or `boot/android-boot-linux.sh boot-linux-slotb.img` from a computer |
-| Send all traffic through a VPN | see below |
+| Send all traffic through a VPN | see below (`sudo mu300-extra install vpn` first) |
+| Add or remove optional parts (the VPN engines) | `mu300-extra list`, `sudo mu300-extra install vpn`, `sudo mu300-extra remove vpn` |
 
 ### Installing from Android with a Magisk zip
 
@@ -359,15 +360,26 @@ The device can send its own traffic **and** everything from connected clients th
 engine is [Xray](https://github.com/XTLS/Xray-core) behind [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel)
 on a kernel TUN; `ENGINE=sing-box` in the config switches back to sing-box. Links that ask for `allowInsecure`
 work: Xray 26 dropped that option, so the server's certificate is fetched once, pinned, and re-fetched by itself
-when the server renews it. The kill switch (`KILL_SWITCH=1`) only works with `ENGINE=sing-box` for now; an
-existing configuration that has it on stays on sing-box after an update.
+when the server renews it. The kill switch (`KILL_SWITCH=1`) needs sing-box: with it on, sing-box runs even when
+`ENGINE=xray` is set, and when the engines are missing it stays up while they are downloaded (only the device
+itself, only to the release hosts, for 15 minutes at most); nothing that fails takes it down.
+
+The engines (about 120 MB) are not part of the systems: they are the **vpn extra**, which you add once - the
+installer asks, or on the device:
 
 ```sh
+sudo mu300-extra install vpn          # downloads it from the release, checks it against the release's SHA256SUMS
 sudo cp /etc/mu300/vpn.conf.example /etc/mu300/vpn.conf
 sudo nano /etc/mu300/vpn.conf         # paste your vless:// link into VLESS_URI, set ENABLE=1
 sudo systemctl enable --now mu300-vpn
 mu300-vpn status
 ```
+
+Extras live on the Linux partition next to the systems (`/mnt/mu300-disk/extra`), so Ubuntu and OpenWrt share one
+copy and an update or reinstall of a system keeps it; `mu300-update apply` brings them to the new release.
+`mu300-extra list` shows what there is, `mu300-extra status` what is installed, `sudo mu300-extra remove vpn` takes it
+off again (turn the VPN off first; it refuses while the VPN is on). A device that used the VPN before the engines became an extra keeps it working: the update installs the
+vpn extra by itself (or keeps the engines of the old system), and `mu300-vpn` fetches it when it finds none.
 
 ### Updating
 
