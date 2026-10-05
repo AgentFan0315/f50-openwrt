@@ -202,7 +202,7 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K82 | `tests/test_mu300_i18n.py` | c | - | replaced by `tests/test_luci_i18n.py` (D6, D7) |
 | K83 | `tests/test_tf_*.py` | x | - | SD (superseded) and Magisk |
 
-Count: **a 45, b 16, c 16, x 6** (83 rows; K-ids are unique). The fork's docs (`FINDINGS`, `BUILD`,
+Count: **a 41, b 15, c 18, x 9** (83 rows, after the device gates; K-ids are unique). The fork's docs (`FINDINGS`, `BUILD`,
 `KERNEL-PATCH-AUDIT`) are not copied: where one of our measurements confirms a fork finding, the FINDINGS entry
 cites the fork commit.
 
