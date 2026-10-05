@@ -200,6 +200,14 @@ class Builder(unittest.TestCase):
             self.assertFalse([n for n in zipfile.ZipFile(zp).namelist() if n.endswith('mu300-install.conf')])
 
 
+class Workflow(unittest.TestCase):
+    def test_package_lists_are_fresh_before_the_tools_are_installed(self):
+        # a runner image's lists go stale; apt-get install then asks for package versions the mirror dropped
+        steps = (TOP / '.github/workflows/magisk.yml').read_text()
+        self.assertIn('sudo apt-get update -qq', steps)
+        self.assertLess(steps.index('apt-get update'), steps.index('apt-get install'))
+
+
 BUSYBOX_PATH = shutil.which('busybox')
 
 

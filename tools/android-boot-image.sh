@@ -113,7 +113,8 @@ _device_segment() {
     # cpio reports its block count on stderr: shown only when it fails (a cpio without -R, say)
     (cd "$1" && find . -mindepth 1 | sed 's|^\./||' | LC_ALL=C sort | cpio -o -H newc -R 0:0) > "$2.cpio" 2> "$2.err" ||
         { cat "$2.err" >&2; return 1; }
-    "${MAGISKBOOT:-magiskboot}" compress=lz4_legacy "$2.cpio" "$2" >/dev/null 2>&1 || return 1
+    # magiskboot's reason, kept as cpio's is: on the device it is the only one there is
+    "${MAGISKBOOT:-magiskboot}" compress=lz4_legacy "$2.cpio" "$2" >/dev/null 2> "$2.err" || { cat "$2.err" >&2; return 1; }
     [ "$(od -An -tx1 -N4 "$2" | tr -d ' \n')" = "$LZ4_MAGIC" ] || return 1
     # Only the magic and whole chunks. Magisk's lz4_lg variant ends with the uncompressed size (v30.7's lz4_legacy
     # does not), and in front of the generic segment the kernel would take that word for the size of a chunk: the

@@ -264,8 +264,11 @@ class DeviceSide(ShellTest):
         self.stub('mb-short', 'case $1 in compress=*) printf "\\002\\041\\114\\030\\377\\000\\000\\000ab" > "$3" ;; esac')
         self.stub('mb-wrong', 'case $1 in compress=*) printf "\\002\\041\\114\\030\\002\\000\\000\\000ab" > "$3" ;; '
                               'decompress) printf other > "$3" ;; esac')
+        # magiskboot's own reason, kept: on the device it is the only clue
+        self.stub('mb-err', 'echo "magiskboot: No space left on device" >&2; exit 1')
         for shell in self.each_shell():
-            for mb, why in (('mb-short', 'no whole LZ4 chunk'), ('mb-wrong', 'does not decompress')):
+            for mb, why in (('mb-short', 'no whole LZ4 chunk'), ('mb-wrong', 'does not decompress'),
+                            ('mb-err', 'No space left on device')):
                 r = self.lib(shell, f'device_segment "{d}" "{self.tmp}/seg.lz4"', magiskboot=mb)
                 self.assertNotEqual(r.returncode, 0, mb)
                 self.assertIn(why, r.stderr)

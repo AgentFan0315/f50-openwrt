@@ -38,6 +38,7 @@ jobs:
           ref: ${{ env.TAG }}
       - name: Tools
         run: |
+          sudo apt-get update -qq
           sudo apt-get install -y -qq zip unzip cpio dash busybox lz4 >/dev/null
           python3 -m pip install -q lz4 || python3 -m pip install -q --break-system-packages lz4
       - name: Release assets
