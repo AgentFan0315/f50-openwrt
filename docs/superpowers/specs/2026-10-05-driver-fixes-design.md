@@ -115,6 +115,22 @@ local and MAC over 5+ boots; accept if constant.
 `rootfs-fixups` (which adds the `/usr/local/bin` links on installed systems) has a shorter list than the image
 build. One list, with `mu300-device`; a test that the three lists (Ubuntu image, OpenWrt image, fixups) agree.
 
+### 11. The USB identity of two devices restored from one backup (added during the work)
+
+A device restored from another's backup has its `androidboot.serialno`, so its gadget serial number and MACs (33b)
+are the other's, and a computer with both gives one of them no network. The identity takes the eMMC serial too
+(`androidboot.emmcid`, or the CID's product serial). Decided for every device, since a clone cannot tell it is one:
+each host sees a new adapter once after the update (written in FINDINGS 33i). Test: shell tests of the derivation;
+on F50 #1 and the U30 Air the host gets its network on the new adapter.
+
+### Decisions taken during the work
+
+* Item 1: answering a failed ENABLE with REQ_FAIL is kept; what the CP does with it is unknown (FINDINGS 33j).
+* Item 3: after review, IPv4 options, IPv6 extension headers and a short UDP length go to the stack.
+* Item 4: the post-init unwind takes the failed channel too (and a channel without a pool deinits safely). The
+  reorder change is rejected on review (FINDINGS 33j), without the measurement.
+* Item 5: taken (ping 4.98 -> 1.46 ms, throughput within 10 %, also both ways at once).
+
 ### 10. Not taken now
 
 * `boot/init` USB changes of the fork (single-configuration RNDIS, early DHCP in the initramfs): for Windows,

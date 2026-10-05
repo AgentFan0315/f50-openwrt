@@ -1942,3 +1942,36 @@ a new network adapter once - macOS sets up a new interface by itself (measured o
 45-48 s after the reboot), Windows installs the adapter again and may ask once more which kind of network it is on,
 and a computer that kept a setting for the old adapter (a fixed address, a firewall rule by MAC) has to be told about
 the new one.
+
+### 33j. Vendor driver fixes from the U30 Air test, measured
+
+Before and after on the U30 Air (the "before" being the kernels of the overnight test), per boot:
+
+| | before | after |
+|---|---|---|
+| reboots on 6.18.55 | 1 panic in 5: 855 `sipa_dele get pd fail ret = 1`, soft lockup in `cp_dele_on_commad`, a 68 s shutdown | 20 of 20 clean: no `get pd fail`, no lockup, no new pstore dump, shutdown 20-30 s, mobile data on every boot |
+| `cannot create duplicate filename` (sipc debug devices) | 12, with 13 call traces | 0 and 0; the four `/dev/sipc_*` once |
+| `br-lan: hw csum failure` (Wi-Fi RX) | 1 per boot | 0 over a boot and ten Wi-Fi joins of a phone |
+| IPv6 TCP from a Wi-Fi client to the device's link-local | never connected (the SYN was dropped for its firmware sum) | connects |
+| `to free list empty` / `out of time` | 302 / 46 in 5 minutes | 0 / 0 |
+| USB ping from a Mac, 100 at 100 ms (NCM) | 4.98 ms | 1.46 ms |
+
+Throughput did not move beyond its spread: phone -> device 537-555 vs 553-571 Mbit/s, device -> phone 424-474 vs
+410-453, Mac -> device over USB 337 vs 333, device -> Mac 268 vs 267, both ways at once 190/153 vs 215/148.
+
+* sipa_dele: `pm_runtime_get_sync()` returns 1 for a device already active; the vendor loop took it for a failure
+  and retried every millisecond for ever. A failure is now answered with `SMSG_VAL_DELE_REQ_FAIL`. What the CP does
+  with that answer to ENABLE is not known (the vendor never sent one), and the failure needs runtime PM switched off
+  under a suspended device, which these tests did not produce.
+* Wi-Fi RX: the firmware's sum is checked against the frame's pseudo-header and only a match is trusted
+  (CHECKSUM_UNNECESSARY); IPv4 options, IPv6 extension headers and a UDP length short of the IP payload are left to
+  the stack, since where the firmware starts its sum is not documented.
+* Wi-Fi PCIe post-init runs on every power-on of the chip (each hotspot start): 5 restarts, 5 post-inits. Its error
+  path, which used to leave the channel table NULL for the next power-on and the failed channel half set up, was
+  reviewed, not produced.
+* Rejected: the fork's reorder change (its timer was not pushed forward by out-of-order frames before either; the
+  change would let a new hole be skipped almost at once, and 20 ms is short for block-ack retries), its CHECKSUM_NONE
+  for every frame, and its latency probes.
+* Measuring Wi-Fi with an Android phone: flushing the phone's neighbour entry for its gateway made Android give up
+  the network and join another saved one; `cmd wifi set-network-selection-config enabled enabled -a 2` keeps it on
+  the network it is on while testing (and `-a 0` restores it).

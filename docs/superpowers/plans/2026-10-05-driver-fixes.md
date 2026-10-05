@@ -24,6 +24,9 @@ Spec: `docs/superpowers/specs/2026-10-05-driver-fixes-design.md`. Branch `driver
 6. 7.2.9 with everything taken: install, a few cycles, measurements; the U30 Air stays on it.
 7. 5.4 patches for items 1, 2 and the PCIe post-init: apply and compile check.
 8. Independent review of each kernel/module diff; FINDINGS; report in `.superpowers/DRIVER-REPORT.md`.
+9. Added during the work (from the coordinator): the USB gadget's serial number and MACs unique per physical device
+   when two devices share `androidboot.serialno` (one restored from the other's backup): boot/init, TDD, measured on
+   F50 #1 and the U30 Air (spec item 11).
 
 ## End states
 
