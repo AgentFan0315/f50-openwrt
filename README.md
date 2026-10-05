@@ -202,8 +202,8 @@ whenever OpenWrt is chosen (`MU300_OPENWRT=plain|luci` answers without asking), 
 * **Status dashboard:** live radio readings (signal, bands, cells, temperatures), mobile data state.
 * **Cellular > Network locks:** network mode, band, cell and EN-DC locks that persist across reboots and are replayed at boot, before
   the radio comes on where the modem allows it.
-* **Cellular > SMS:** read, send and delete messages. A pool daemon syncs the SIM every 30 s with `AT+CMGL`, which is
-  expected (3GPP behaviour) to mark unread messages as read; this is checked in the device phase. Do not run
+* **Cellular > SMS:** read, send and delete messages. A pool daemon syncs the SIM every 30 s with `AT+CMGL`, which marks
+  unread messages on the SIM as read (measured, FINDINGS 35; the panel keeps its own unread state). Do not run
   `sms delete read` on this system.
 * **Cellular > AT terminal:** guarded AT commands over the same channel daemons the system uses.
 * **Cellular > Device management:** USB role (device or host), the USB network mode (NCM, ECM or RNDIS, applied at the next boot) and

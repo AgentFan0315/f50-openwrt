@@ -108,7 +108,7 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K3 | the fork's own SD root scan (`mu300sd`) and mount-before-gadget order | c | - | superseded by our SD card work on this branch (294081a, 26b6890) |
 | K4 | `is_mu300root` through a loop device at the offset instead of `dd skip` | c | - | measured (FINDINGS 35): busybox `dd` seeks; the probe at the region offset takes 0.01-0.04 s on the F50 and under 0.08 s on the U30 Air, nothing to win |
 | K5 | early DHCP: `udhcpd` on the gadget's netdev right after binding, `killall udhcpd` before `switch_root` | a | all | lease 120 s, not 3600 (a host must not keep an early lease when the system's LAN differs from the default subnet) |
-| K6 | RNDIS as a single configuration with ACM, `bcdDevice 0x0302` | a | all | gate: Windows 10/11 host gets a network adapter (only with `MU300_USBNET=rndis`) |
+| K6 | RNDIS as a single configuration with ACM, `bcdDevice 0x0302` | a | all | gate: Windows 10/11 host gets a network adapter (only with `MU300_USBNET=rndis`) - not measured (no Windows host, FINDINGS 35); kept: only an explicit RNDIS choice uses it |
 | K7 | USB mode policy read before the gadget is created | b | openwrt-luci | reshaped (D12): `etc/mu300/usb-net`, after `pick_root`, rebind only on difference |
 | K8 | one-shot "applied" marker `/run/unisoc-usb-net-applied` | b | openwrt-luci | with K7, renamed `/run/mu300/usb-net-applied` |
 
@@ -130,7 +130,7 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K20 | `init.d/mu300-atd`: `radio-warmup` instance (`mobile-data radio-on` once nr1 is ready) | a | OpenWrt | Ubuntu: `mu300-mobile-data.service` already starts early; it gets `radio-on` as `ExecStartPre` only if measured faster |
 | K21 | `init.d/mu300-atd`: plugin early-hook marker | b | openwrt-luci | line guarded by `[ -x /usr/libexec/unisoc-modem/lock ]` |
 | K22 | `mu300-vendor`: START 11 -> 09 | a | OpenWrt | 1.4 s earlier CP release (fork's boot timeline) |
-| K23 | `mu300-vendor`: no `sleep 5` before `android-vendor-start` | a | OpenWrt | gate: 10 cold boots per device register on the network every time ("wait modem alive timeout" never appears) |
+| K23 | `mu300-vendor`: no `sleep 5` before `android-vendor-start` | a | OpenWrt | gate: 10 cold boots per device register on the network every time ("wait modem alive timeout" never appears) - passed (FINDINGS 35): 9 + 11 soft reboots registered at 30.1-31.4 s, no timeout |
 | K24 | `sysctl.d/99-mu300-console.conf`: `kernel.printk = 1` | a | all | Ubuntu: `rootfs/overlay/etc/sysctl.d/`; the UART console no longer prints the WLAN log synchronously |
 | K25 | `uci-defaults`: dnsmasq host entry for the USB host with `broadcast` | a | OpenWrt | with K5 |
 | K26 | `uci-defaults`: `earlyusb` firewall zone for `usb0` before br-lan exists | a | OpenWrt | input only, forwarding rejected |
@@ -169,8 +169,8 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K54 | `openwrt-wifi-config`: `noscan 1` | c | - | forces 40 MHz on 2.4 GHz regardless of neighbours (20/40 coexistence) |
 | K55 | `wifi-start`: `insmod` the WLAN modules when `modprobe` cannot | a | all | `modprobe` first, `insmod` from `$K` or `$K/extra` as the fallback |
 | K56 | `mobile-data`: 4G/5G from `AT+CEREG?` instead of `AT+COPS?` | a | all | COPS takes ~2 s on weak service, on every watchdog round |
-| K57 | `mobile-data`: `radio_on` waits for nr0's first URC, does the RIL handshake `AT+SMMSWAP=0` once, waits for `CFUN: 1` after `SFUN=4` instead of power-cycling at once; a lock against two radio state machines | a | all | gate: both devices, 10 cold boots each, registered every time; time to `CFUN: 1` recorded |
-| K58 | `mobile-data`: `AT+CAVIMS=1` (IMS bearer for SMS) | a | all | gate: SMS send and receive with the Turkish SIM on both devices still work |
+| K57 | `mobile-data`: `radio_on` waits for nr0's first URC, does the RIL handshake `AT+SMMSWAP=0` once, waits for `CFUN: 1` after `SFUN=4` instead of power-cycling at once; a lock against two radio state machines | a | all | gate: both devices, 10 cold boots each, registered every time; time to `CFUN: 1` recorded - passed (FINDINGS 35): SMMSWAP OK 20/20, one SFUN=4 per boot, registered every time |
+| K58 | `mobile-data`: `AT+CAVIMS=1` (IMS bearer for SMS) | a | all | gate: SMS send and receive with the Turkish SIM on both devices still work - not measured (both lines without credit: the same CMS error with CAVIMS 0 and 1); kept |
 | K59 | `mobile-data`: registration from nr0's `+CEREG` URCs, query every 5 s as the fallback | a | all | replaces the 2 s poll loop |
 | K60 | `mobile-data`: bounded address fetch with one idempotent `CGACT=1` reassert; no `CGACT?` query first | a | all | fork measured "CGACT up, no address for 40 s" on NR |
 | K61 | `mobile-data`: operator name logged in the background after success | a | all | |
