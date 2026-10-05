@@ -356,10 +356,13 @@ $(t 'Take the card out and install the zip again, or install to the card (MU300_
     INTERNAL_EXISTS=0; [ "$int_existing" = yes ] && INTERNAL_EXISTS=1
     FORMAT=0; UPDATE=0
     if [ "$existing" = yes ]; then
-        case ${MU300_MODE:-update} in update) UPDATE=1 ;; wipe) FORMAT=1; USED_KEYS="$USED_KEYS MU300_MODE" ;; esac
+        case ${MU300_MODE:-update} in update) UPDATE=1 ;; wipe) FORMAT=1 ;; esac
     else
         FORMAT=1
     fi
+    # a wipe is used by the install that formats, also one onto a target with no filesystem yet (a blank region, a
+    # new card): left standing, the next flash would wipe the system this one installs
+    if [ "${MU300_MODE:-}" = wipe ] && [ "$FORMAT" = 1 ]; then USED_KEYS="$USED_KEYS MU300_MODE"; fi
     # A card is formatted only when a trusted file says MU300_SD_ERASE=yes, whatever the reason (a new card, or
     # MU300_MODE=wipe on a mu300sd one), and only when that same trust chose the card: a standing MU300_SD_ERASE=yes
     # in /data/adb must not be aimed at whatever card is in the slot by a MU300_STORAGE=sd any app can write.

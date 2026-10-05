@@ -875,6 +875,40 @@ class Install(InstallerCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn('# MU300_REGION_OVERWRITE was used by the installer and removed', conf.read_text())
 
+    def test_a_wipe_counts_for_one_install_whatever_the_target_held(self):
+        # MU300_MODE=wipe in /data/adb is used by the install that formats, also when the target had no filesystem
+        # yet (a blank region, a new card): left standing, the next flash (the second zip, an update) would wipe
+        # the system this one installed
+        conf = self.fake.root / 'data/adb/mu300-install.conf'
+        cases = (  # name, card before, trusted conf, the target as the first install leaves it
+            ('blank region', None, 'MU300_MODE=wipe\n', lambda: self.existing_filesystem(systems=('openwrt',))),
+            ('installed region', 'region', 'MU300_MODE=wipe\n', lambda: None),
+            ('new card', bytes(1 << 20), 'MU300_STORAGE=sd\nMU300_SD_ERASE=yes\nMU300_MODE=wipe\n',
+             lambda: self.device(card=fake_ext4_bytes('mu300sd'))),
+            ('mu300sd card', fake_ext4_bytes('mu300sd'), 'MU300_SD_ERASE=yes\nMU300_MODE=wipe\n',
+             lambda: self.device(card=fake_ext4_bytes('mu300sd'))))
+        for name, card, trusted, formatted in cases:
+            with self.subTest(name):
+                self.reset()
+                if card == 'region':
+                    self.existing_filesystem(systems=('openwrt',))
+                elif card is not None:
+                    self.device(card=card)
+                r = self.run_installer(trusted=trusted)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn('FORMAT=1', (self.fake.root / 'install.env').read_text())
+                text = conf.read_text()
+                for k in ('MU300_MODE', 'MU300_SD_ERASE'):
+                    self.assertNotRegex(text, rf'(?m)^\s*{k}\s*=')
+                self.assertIn('# MU300_MODE was used by the installer and removed', text)
+                formatted()
+                # the next flash, with the conf as the first one left it: an update, nothing formatted
+                r = self.run_installer(conf='MU300_DRY_RUN=1\n', trusted=text)
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertNotIn('CREATE new ext4', r.stdout)
+                self.assertIn('keep: settings and data', r.stdout)
+                self.assertTrue(self.nothing_written())
+
     def test_misc_changed_meanwhile_is_not_armed(self):
         # a stub android-install.sh that changes misc while "installing" (an OTA, another installer)
         self.fake_install_hook('printf X | dd of="$FAKE/dev/block/by-name/misc" bs=1 seek=2060 conv=notrunc 2>/dev/null')
