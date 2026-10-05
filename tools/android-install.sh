@@ -198,7 +198,7 @@ extra_keep_vpn() {  # extra_keep_vpn DISK OLDROOT: the system being replaced use
     echo vpn > "$x/.vpn.new/name"
     cat "$2/etc/mu300/image-version" > "$x/.vpn.new/release" 2>/dev/null || echo unknown > "$x/.vpn.new/release"
     echo "taken from the image of the previous system" > "$x/.vpn.new/components"
-    mv "$x/.vpn.new" "$x/vpn"
+    rm -rf "$x/vpn"; mv "$x/.vpn.new" "$x/vpn"
     say "kept the VPN engines of the previous system as the vpn extra"
 }
 # --- extra end

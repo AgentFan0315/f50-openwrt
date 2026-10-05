@@ -64,7 +64,7 @@ which a non-login shell (`ssh root@... mu300-ussd`) and sudo never see.
 mu300-extra list              the extras a release offers, and which are installed
 mu300-extra status            installed extras: release, size, commands
 mu300-extra install NAME      download (release of this system), verify, install, link
-mu300-extra remove NAME
+mu300-extra remove NAME [--force]   refuses the vpn extra while ENABLE=1 unless --force (review fix)
 mu300-extra link              put the system's and the extras' commands on the PATH (run at boot)
 mu300-extra adopt NAME        take the engines from the system an update replaced (<os>.old); used by mu300-vpn
 ```

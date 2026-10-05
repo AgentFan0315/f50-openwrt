@@ -243,7 +243,7 @@ mu300-vpn status
 Extras live on the Linux partition next to the systems (`/mnt/mu300-disk/extra`), so Ubuntu and OpenWrt share one
 copy and an update or reinstall of a system keeps it; `mu300-update apply` brings them to the new release.
 `mu300-extra list` shows what there is, `mu300-extra status` what is installed, `sudo mu300-extra remove vpn` takes it
-off again. A device that used the VPN before the engines became an extra keeps it working: the update installs the
+off again (turn the VPN off first; it refuses while the VPN is on). A device that used the VPN before the engines became an extra keeps it working: the update installs the
 vpn extra by itself (or keeps the engines of the old system), and `mu300-vpn` fetches it when it finds none.
 
 ### Updating
