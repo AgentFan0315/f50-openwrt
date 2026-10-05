@@ -42,9 +42,6 @@ msgstr "China Broadnet"
 msgid "China Tietong"
 msgstr "China Tietong"
 
-msgid "Unknown"
-msgstr "Bilinmiyor"
-
 msgid "Excellent"
 msgstr "Mükemmel"
 
@@ -56,6 +53,9 @@ msgstr "Orta"
 
 msgid "Poor"
 msgstr "Zayıf"
+
+msgid "Unknown"
+msgstr "Bilinmiyor"
 
 msgid "%d d %d h"
 msgstr "%d gün %d sa"
@@ -92,3 +92,489 @@ msgstr "Bilinmeyen numara"
 
 msgid "Select"
 msgstr "Seç"
+
+msgid "Modulation DL/UL"
+msgstr "Modülasyon İndirme/Yükleme"
+
+msgid "Estimated from current MCS"
+msgstr "Geçerli MCS değerinden tahmin"
+
+msgid "MCS DL/UL"
+msgstr "MCS İndirme/Yükleme"
+
+msgid "BLER DL/UL"
+msgstr "BLER İndirme/Yükleme"
+
+msgid "Link & traffic"
+msgstr "Bağlantı ve trafik"
+
+msgid "Download rate"
+msgstr "İndirme hızı"
+
+msgid "Upload rate"
+msgstr "Yükleme hızı"
+
+msgid "Total received"
+msgstr "Toplam alınan"
+
+msgid "Total sent"
+msgstr "Toplam gönderilen"
+
+msgid "Session duration"
+msgstr "Oturum süresi"
+
+msgid "Registration"
+msgstr "Kayıt durumu"
+
+msgid "Bandwidth"
+msgstr "Bant genişliği"
+
+msgid "AMBR DL/UL"
+msgstr "AMBR İndirme/Yükleme"
+
+msgid "Wi-Fi · LAN · Device · SIM"
+msgstr "Wi-Fi · LAN · Cihaz · SIM"
+
+msgid "CPU usage"
+msgstr "CPU kullanımı"
+
+msgid "Memory"
+msgstr "Bellek"
+
+msgid "Storage"
+msgstr "Depolama"
+
+msgid "Power"
+msgstr "Güç"
+
+msgid "Channel"
+msgstr "Kanal"
+
+msgid "Encryption"
+msgstr "Şifreleme"
+
+msgid "Hidden SSID"
+msgstr "Gizli SSID"
+
+msgid "Country"
+msgstr "Ülke"
+
+msgid "AP status"
+msgstr "AP durumu"
+
+msgid "USB network"
+msgstr "USB ağı"
+
+msgid "Connection tracking"
+msgstr "Bağlantı izleme"
+
+msgid "LAN address"
+msgstr "LAN adresi"
+
+msgid "Wi-Fi clients"
+msgstr "Wi-Fi istemcileri"
+
+msgid "DHCP leases"
+msgstr "DHCP kiraları"
+
+msgid "Device model"
+msgstr "Cihaz modeli"
+
+msgid "System"
+msgstr "Sistem"
+
+msgid "Modem"
+msgstr "Modem"
+
+msgid "Carrier"
+msgstr "Operatör"
+
+msgid "Module"
+msgstr "Modül"
+
+msgid "Firmware"
+msgstr "Ürün yazılımı"
+
+msgid "Show SIM identifiers"
+msgstr "SIM kimliklerini göster"
+
+msgid "Quick controls"
+msgstr "Hızlı denetimler"
+
+msgid "Data connection"
+msgstr "Veri bağlantısı"
+
+msgid "Cellular radio"
+msgstr "Hücresel radyo"
+
+msgid "Wi-Fi hotspot"
+msgstr "Wi-Fi erişim noktası"
+
+msgid "Restart modem"
+msgstr "Modemi yeniden başlat"
+
+msgid "Restart device"
+msgstr "Cihazı yeniden başlat"
+
+msgid "Switch to Android"
+msgstr "Android’e geç"
+
+msgid "Neighbor cells"
+msgstr "Komşu hücreler"
+
+msgid "RAT/Band"
+msgstr "Teknoloji/Bant"
+
+msgid "Frequency"
+msgstr "Frekans"
+
+msgid "Running %s…"
+msgstr "%s çalıştırılıyor…"
+
+msgid "Started in background: %s"
+msgstr "Arka planda başlatıldı: %s"
+
+msgid "Done: %s"
+msgstr "Tamamlandı: %s"
+
+msgid "Failed: %s"
+msgstr "Başarısız: %s"
+
+msgid "Unknown error"
+msgstr "Bilinmeyen hata"
+
+msgid "Request failed"
+msgstr "İstek başarısız"
+
+msgid "Disconnecting data…"
+msgstr "Veri bağlantısı kesiliyor…"
+
+msgid "Connecting data…"
+msgstr "Veri bağlantısı kuruluyor…"
+
+msgid "Turn off cellular radio"
+msgstr "Hücresel radyoyu kapat"
+
+msgid "Cellular connectivity will be interrupted."
+msgstr "Hücresel bağlantı kesilecek."
+
+msgid "Turn on cellular radio"
+msgstr "Hücresel radyoyu aç"
+
+msgid "The SFUN power-on sequence will run (up to about 1 minute)."
+msgstr "SFUN açılış sırası çalışacak (yaklaşık 1 dakikaya kadar)."
+
+msgid "Cellular connectivity may stop for 1–2 minutes."
+msgstr "Hücresel bağlantı 1–2 dakika kesilebilir."
+
+msgid "Restart the entire device"
+msgstr "Tüm cihazı yeniden başlat"
+
+msgid "All connections will be interrupted."
+msgstr "Tüm bağlantılar kesilecek."
+
+msgid "The next boot will enter Android and reboot now. This management page and cellular sharing will disconnect."
+msgstr "Sonraki açılış Android’e geçecek ve cihaz şimdi yeniden başlayacak. Yönetim sayfası ve hücresel paylaşım kesilecek."
+
+msgid "To return to OpenWrt, run mu300-next-boot linux in Android and reboot."
+msgstr "OpenWrt’ye dönmek için Android’de mu300-next-boot linux çalıştırıp yeniden başlatın."
+
+msgid "Or do nothing: after five boots that do not finish, it falls back automatically."
+msgstr "Ya da hiçbir şey yapmayın: tamamlanmayan beş açılıştan sonra otomatik olarak geri dönülür."
+
+msgid "Switch and reboot"
+msgstr "Geç ve yeniden başlat"
+
+msgid "Preparing Android boot and rebooting…"
+msgstr "Android açılışı hazırlanıyor ve yeniden başlatılıyor…"
+
+msgid "Hide SIM identifiers"
+msgstr "SIM kimliklerini gizle"
+
+msgid "Lock cell %s?"
+msgstr "%s hücresi kilitlensin mi?"
+
+msgid "The radio stack will restart (SFUN); cellular service will stop for about 30 seconds."
+msgstr "Radyo yığını yeniden başlayacak (SFUN); hücresel bağlantı yaklaşık 30 saniye kesilecek."
+
+msgid "Locking %s in the background, about 30 seconds"
+msgstr "%s arka planda kilitleniyor, yaklaşık 30 saniye"
+
+msgid "Locked %s in the background; the status will refresh shortly"
+msgstr "%s arka planda kilitlendi; durum birazdan yenilenecek"
+
+msgid "Lock failed: %s"
+msgstr "Kilitleme başarısız: %s"
+
+msgid "Uptime %s"
+msgstr "Çalışma süresi %s"
+
+msgid "Radio off"
+msgstr "Radyo kapalı"
+
+msgid "No response"
+msgstr "Yanıt yok"
+
+msgid "%s · Signal %s %s/10"
+msgstr "%s · Sinyal %s %s/10"
+
+msgid "%s · Signal %s"
+msgstr "%s · Sinyal %s"
+
+msgid "Anchor B%s"
+msgstr "Bağlantı noktası B%s"
+
+msgid "No serving cell"
+msgstr "Bağlı olunan hücre yok"
+
+msgid "Not registered"
+msgstr "Kayıtlı değil"
+
+msgid "Registered"
+msgstr "Kayıtlı"
+
+msgid "Searching"
+msgstr "Aranıyor"
+
+msgid "Registration denied"
+msgstr "Kayıt reddedildi"
+
+msgid "Registered (roaming)"
+msgstr "Kayıtlı (dolaşım)"
+
+msgid "Emergency only"
+msgstr "Yalnızca acil arama"
+
+msgid "Status %s"
+msgstr "Durum %s"
+
+msgid "LTE anchor"
+msgstr "LTE bağlantı noktası"
+
+msgid "LTE link"
+msgstr "LTE bağlantısı"
+
+msgid "Hidden"
+msgstr "Gizli"
+
+msgid "No"
+msgstr "Hayır"
+
+msgid "Running"
+msgstr "Çalışıyor"
+
+msgid "Not running"
+msgstr "Çalışmıyor"
+
+msgid "Connected"
+msgstr "Bağlı"
+
+msgid "Disconnected"
+msgstr "Bağlı değil"
+
+msgid "%s entries"
+msgstr "%s kayıt"
+
+msgid "%s clients"
+msgstr "%s istemci"
+
+msgid "Recent DHCP leases"
+msgstr "Son DHCP kiraları"
+
+msgid "%d h"
+msgstr "%d sa"
+
+msgid "Board"
+msgstr "Anakart"
+
+msgid "No temperature readings"
+msgstr "Sıcaklık verisi yok"
+
+msgid "Cluster %d"
+msgstr "Küme %d"
+
+msgid "Total %s · free %s"
+msgstr "Toplam %s · boş %s"
+
+msgid "Online"
+msgstr "Çevrimiçi"
+
+msgid "AT adapter unavailable"
+msgstr "AT bağdaştırıcısı kullanılamıyor"
+
+msgid "Automatic"
+msgstr "Otomatik"
+
+msgid "4G only"
+msgstr "Yalnızca 4G"
+
+msgid "Serving network"
+msgstr "Bağlı olunan ağ"
+
+msgid "Network mode · EN-DC"
+msgstr "Ağ modu · EN-DC"
+
+msgid "Refresh lock status"
+msgstr "Kilit durumunu yenile"
+
+msgid "Apply at startup"
+msgstr "Başlangıçta uygula"
+
+msgid "Turning this off only stops replay at the next boot; saved network mode, EN-DC, band and cell settings remain."
+msgstr "Kapatılması yalnızca sonraki açılışta yeniden uygulamayı durdurur; kayıtlı ağ modu, EN-DC, bant ve hücre ayarları korunur."
+
+msgid "Band locking"
+msgstr "Bant kilitleme"
+
+msgid "NR bands"
+msgstr "NR bantları"
+
+msgid "LTE bands"
+msgstr "LTE bantları"
+
+msgid "Apply NR bands"
+msgstr "NR bantlarını uygula"
+
+msgid "Apply LTE bands"
+msgstr "LTE bantlarını uygula"
+
+msgid "Neighbor cells and cell locking"
+msgstr "Komşu hücreler ve hücre kilidi"
+
+msgid "Lock current serving cell"
+msgstr "Geçerli hizmet hücresini kilitle"
+
+msgid "Unlock cell"
+msgstr "Hücre kilidini kaldır"
+
+msgid "Applying restarts the radio stack (SFUN) and briefly interrupts cellular service. Settings are saved and replayed by the plugin after AT is ready when Apply at startup is enabled. A platform pre-radio hook can replay without a restart. Apply with no bands selected to restore automatic mode."
+msgstr "Uygulama radyo yığınını (SFUN) yeniden başlatır ve hücresel bağlantıyı kısa süre keser. Ayarlar kaydedilir ve Başlangıçta uygula etkinse AT hazır olduğunda eklenti tarafından yeniden uygulanır. Platformun radyo öncesi kancasıyla yeniden başlatmadan uygulanabilir. Otomatik moda dönmek için hiçbir bant seçmeden uygulayın."
+
+msgid "Apply “%s”?"
+msgstr "“%s” uygulansın mı?"
+
+msgid "Apply"
+msgstr "Uygula"
+
+msgid "Applying %s in the background…"
+msgstr "%s arka planda uygulanıyor…"
+
+msgid "Applying %s in the background… (SFUN restart and re-registration, about 30 seconds)"
+msgstr "%s arka planda uygulanıyor… (SFUN yeniden başlatması ve ağa yeniden kayıt, yaklaşık 30 saniye)"
+
+msgid "Queued: another lock is being applied during SFUN restart; this will take effect afterward"
+msgstr "Sıraya alındı: SFUN yeniden başlarken başka bir kilit uygulanıyor; ardından etkinleşecek"
+
+msgid "Confirming the EN-DC status…"
+msgstr "EN-DC durumu doğrulanıyor…"
+
+msgid "Confirming apply at startup…"
+msgstr "Başlangıçta uygulama doğrulanıyor…"
+
+msgid "Started in background: %s (SFUN restart, about 30 seconds); reading the status back…"
+msgstr "Arka planda başlatıldı: %s (SFUN yeniden başlatması, yaklaşık 30 saniye); durum geri okunuyor…"
+
+msgid "Network mode: %s"
+msgstr "Ağ modu: %s"
+
+msgid "Disable EN-DC (NSA anchor)"
+msgstr "EN-DC’yi kapat (NSA bağlantı noktası)"
+
+msgid "Enable EN-DC (NSA anchor)"
+msgstr "EN-DC’yi aç (NSA bağlantı noktası)"
+
+msgid "Disable apply at startup"
+msgstr "Başlangıçta uygulamayı kapat"
+
+msgid "Enable apply at startup"
+msgstr "Başlangıçta uygulamayı aç"
+
+msgid "Reading the modem directly (a few seconds at most)…"
+msgstr "Modem doğrudan okunuyor (en fazla birkaç saniye)…"
+
+msgid "Refreshed"
+msgstr "Yenilendi"
+
+msgid "Refresh failed"
+msgstr "Yenileme başarısız"
+
+msgid "NR bands: back to automatic"
+msgstr "NR bantları: otomatiğe dön"
+
+msgid "NR band lock: %s"
+msgstr "NR bant kilidi: %s"
+
+msgid "LTE bands: back to automatic"
+msgstr "LTE bantları: otomatiğe dön"
+
+msgid "LTE band lock: %s"
+msgstr "LTE bant kilidi: %s"
+
+msgid "Remove the %s cell lock"
+msgstr "%s hücre kilidini kaldır"
+
+msgid "The radio stack will restart (SFUN), taking about 30 seconds."
+msgstr "Radyo yığını yeniden başlayacak (SFUN), yaklaşık 30 saniye sürecek."
+
+msgid "Removing the %s cell lock…"
+msgstr "%s hücre kilidi kaldırılıyor…"
+
+msgid "Unlock failed: %s"
+msgstr "Kilit kaldırılamadı: %s"
+
+msgid "Unlock started in background (SFUN restart, about 30 seconds); reading the status back…"
+msgstr "Kilit kaldırma arka planda başlatıldı (SFUN yeniden başlatması, yaklaşık 30 saniye); durum geri okunuyor…"
+
+msgid "Locking %s in the background…"
+msgstr "%s arka planda kilitleniyor…"
+
+msgid "Locked %s in the background (SFUN restart, about 30 seconds); reading the status back…"
+msgstr "%s arka planda kilitlendi (SFUN yeniden başlatması, yaklaşık 30 saniye); durum geri okunuyor…"
+
+msgid "No serving-network data"
+msgstr "Bağlı olunan ağ verisi yok"
+
+msgid "NR serving cell"
+msgstr "NR hizmet hücresi"
+
+msgid "Status confirmed"
+msgstr "Durum doğrulandı"
+
+msgid "Readback timed out; select “Refresh lock status”"
+msgstr "Geri okuma zaman aşımına uğradı; “Kilit durumunu yenile”yi seçin"
+
+msgid "Applied (EN-DC does not require a radio-stack restart)"
+msgstr "Uygulandı (EN-DC için radyo yığını yeniden başlatılmaz)"
+
+msgid "Apply at startup is on"
+msgstr "Başlangıçta uygulama açık"
+
+msgid "Apply at startup is off"
+msgstr "Başlangıçta uygulama kapalı"
+
+msgid "EN-DC status readback timed out; use “Refresh lock status” to confirm"
+msgstr "EN-DC durumunun geri okuması zaman aşımına uğradı; doğrulamak için “Kilit durumunu yenile”yi kullanın"
+
+msgid "Apply-at-startup status readback timed out; use “Refresh lock status” to confirm"
+msgstr "Başlangıçta uygulama durumunun geri okuması zaman aşımına uğradı; doğrulamak için “Kilit durumunu yenile”yi kullanın"
+
+msgid "Automatic (5G/4G)"
+msgstr "Otomatik (5G/4G)"
+
+msgid "5G SA only"
+msgstr "Yalnızca 5G SA"
+
+msgid "5G NSA only"
+msgstr "Yalnızca 5G NSA"
+
+msgid "Locked cells"
+msgstr "Kilitli hücreler"
+
+msgid "Unlock %s"
+msgstr "%s kilidini kaldır"
+
+msgid "Automatic (%d supported)"
+msgstr "Otomatik (%d destekleniyor)"
+
+msgid "%d locked: %s"
+msgstr "%d kilitli: %s"
