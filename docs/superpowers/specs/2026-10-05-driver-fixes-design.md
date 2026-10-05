@@ -119,7 +119,7 @@ build. One list, with `mu300-device`; a test that the three lists (Ubuntu image,
 
 A device restored from another's backup has its `androidboot.serialno`, so its gadget serial number and MACs (33b)
 are the other's, and a computer with both gives one of them no network. The identity takes the eMMC serial too
-(`androidboot.emmcid`, or the CID's product serial). Decided for every device, since a clone cannot tell it is one:
+(`androidboot.emmcid`; not the CID in /sys, which init reads before the eMMC is there). Decided for every device, since a clone cannot tell it is one:
 each host sees a new adapter once after the update (written in FINDINGS 33i). Test: shell tests of the derivation;
 on F50 #1 and the U30 Air the host gets its network on the new adapter.
 

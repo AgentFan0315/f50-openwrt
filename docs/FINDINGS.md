@@ -1933,9 +1933,12 @@ experiment's guard goes into a segment of its own behind the generic one.
 A second F50 restored from the first one's backup came up with the same `androidboot.serialno` (the bootloader
 reads it from the restored data), so 33b's gadget identity was the same on both: the same USB serial number and
 the same host MAC. macOS gave the one network interface to whichever enumerated last, and the other had none.
-init now adds the eMMC's serial (`androidboot.emmcid`, which the bootloader passes on both boards; failing that,
-the product serial field of the eMMC's CID, hex characters 21-28, which is the same value): the USB serial number
-is `MU300LINUX-<serial>-<emmc serial>` and the MACs are `02:50:<md5 of both>:<subnet>:0x`.
+init now adds the eMMC's serial (`androidboot.emmcid`, which the bootloader passes on both boards; it is the
+product serial field of the eMMC's CID, hex characters 21-28): the USB serial number is
+`MU300LINUX-<serial>-<emmc serial>` and the MACs are `02:50:<md5 of both>:<subnet>:0x`. Not read from the CID in
+`/sys` when the argument is missing: init sets up USB before the modules that find the eMMC are loaded (and under
+mainline the eMMC may or may not be there yet), so the identity would change from boot to boot; without the argument
+it is the serial number alone, as before.
 
 Decided for every device, not only for clones (a device cannot tell it is one): after this update each computer sees
 a new network adapter once - macOS sets up a new interface by itself (measured on the U30 Air and an F50: an address
