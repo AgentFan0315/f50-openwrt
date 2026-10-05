@@ -238,12 +238,7 @@ $(t "The backup copy at the end of the disk was written first, so Android's own 
 
 # ---------------------------------------------------------------- free eMMC region
 say "$(t 'Locating free eMMC space after the last partition')"
-set -- $(su_do 'e=0; for p in /sys/block/mmcblk0/mmcblk0p*; do x=$(( $(cat $p/start) + $(cat $p/size) )); [ $x -gt $e ] && e=$x; done; echo $e $(cat /sys/block/mmcblk0/size)')
-[ $# -eq 2 ] || die "$(t 'could not read the partition table from the device (is su granted? try again)')"
-last_end=$1; disk=$2
-start=$(( (last_end / 4096 + 1) * 4096 ))
-end=$(( ((disk - 34) / 4096 - 1) * 4096 ))
-OFF=$((start * 512)); SIZE=$(( (end - start) * 512 ))
+region_probe || die "$(t 'could not read the partition table from the device (is su granted? try again)')"
 gib() { awk -v b="$1" 'BEGIN { printf "%.1f GiB", b / 1073741824 }'; }
 # What each choice needs: the installed systems measure ~320 MiB (OpenWrt) and ~580 MiB (Ubuntu), and an update
 # keeps the previous one as <os>.old while the new one is unpacked, so allow for two of each plus working room.
@@ -276,16 +271,7 @@ if [ $SD_MODE = 0 ] && [ $SIZE -lt $((700 * 1024 * 1024)) ]; then
     fi
     offer_repartition   # exits, either by installing nothing or by rebooting for a second pass
 fi
-# an existing installation defines the region (it may have been created with a slightly different size)
-existing=no
-for cand in $OFF 27762098176; do
-    m=$(su_do "dd if=/dev/block/mmcblk0 bs=1 skip=$((cand + 1080)) count=2 2>/dev/null | od -An -tx1" | tr -d ' ')
-    l=$(su_do "dd if=/dev/block/mmcblk0 bs=1 skip=$((cand + 1144)) count=16 2>/dev/null" | tr -d '\000')
-    if [ "$m" = 53ef ] && [ "$l" = mu300root ]; then
-        blocks=$(su_do "dd if=/dev/block/mmcblk0 bs=1 skip=$((cand + 1028)) count=4 2>/dev/null | od -An -tu4" | tr -d ' ')
-        OFF=$cand; SIZE=$((blocks * 4096)); existing=yes; break
-    fi
-done
+region_find_existing
 echo "$(t 'Linux region: offset {1}, {2}, existing mu300root filesystem: {3}' "$OFF" "$(gib $SIZE)" "$(t "$existing")")"
 INTERNAL_EXISTS=0; [ $existing = yes ] && INTERNAL_EXISTS=1; INT_SIZE=
 if [ $SD_MODE = 1 ]; then
@@ -298,10 +284,7 @@ fi
 # counted as data, a region that was never written stopped the install with "not empty".
 DIRTY=0
 if [ $SD_MODE = 0 ] && [ $existing = no ]; then
-    step=$(( SIZE / 1048576 / 16 ))
-    probe=""; i=0
-    while [ $i -lt 16 ]; do probe="$probe $(( OFF / 1048576 + i * step ))"; i=$((i + 1)); done
-    DIRTY=$(su_do "n=0; for s in $probe; do c=\$(dd if=/dev/block/mmcblk0 bs=1048576 skip=\$s count=1 2>/dev/null | tr -d \"\\000\\377\" | wc -c); [ \$c -gt 0 ] && n=\$((n + 1)); done; echo \$n")
+    region_dirty
     echo "$(t 'data check: {1} of 16 samples contain data' "$DIRTY")"
     # what is there, for a report: the first bytes of the region
     [ "$DIRTY" -gt 0 ] && echo "  $(t 'start of the region: {1}' "$(su_do "dd if=/dev/block/mmcblk0 bs=1048576 skip=$(( OFF / 1048576 )) count=1 2>/dev/null | od -An -tx1 -N32" | tr -s ' \n' ' ')")"
