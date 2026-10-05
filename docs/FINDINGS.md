@@ -1927,3 +1927,18 @@ experiment, and `mu300-update` keeps that segment. 33e made init honour a guard 
 from Android with mu300-linux is exactly that. The generic ramdisk segment, which every update appends behind the
 device segment, now carries an empty `etc/mu300-trial-guard` (a later file replaces an earlier one), and an
 experiment's guard goes into a segment of its own behind the generic one.
+
+### 33i. Two devices restored from one backup
+
+A second F50 restored from the first one's backup came up with the same `androidboot.serialno` (the bootloader
+reads it from the restored data), so 33b's gadget identity was the same on both: the same USB serial number and
+the same host MAC. macOS gave the one network interface to whichever enumerated last, and the other had none.
+init now adds the eMMC's serial (`androidboot.emmcid`, which the bootloader passes on both boards; failing that,
+the product serial field of the eMMC's CID, hex characters 21-28, which is the same value): the USB serial number
+is `MU300LINUX-<serial>-<emmc serial>` and the MACs are `02:50:<md5 of both>:<subnet>:0x`.
+
+Decided for every device, not only for clones (a device cannot tell it is one): after this update each computer sees
+a new network adapter once - macOS sets up a new interface by itself (measured on the U30 Air and an F50: an address
+45-48 s after the reboot), Windows installs the adapter again and may ask once more which kind of network it is on,
+and a computer that kept a setting for the old adapter (a fixed address, a firewall rule by MAC) has to be told about
+the new one.
