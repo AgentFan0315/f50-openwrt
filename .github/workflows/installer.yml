@@ -5,9 +5,9 @@ name: Installer checks
 on:
   push:
     branches: [main]
-    paths: ['install.sh', 'install.ps1', 'uninstall.sh', 'uninstall.ps1', 'tools/*.sh', 'tools/check-i18n.py', 'i18n/**', '.github/workflows/installer.yml']
+    paths: ['install.sh', 'install.ps1', 'uninstall.sh', 'uninstall.ps1', 'tools/*.sh', 'tools/check-i18n.py', 'i18n/**', '.github/workflows/installer.yml', 'android/magisk/**']
   pull_request:
-    paths: ['install.sh', 'install.ps1', 'uninstall.sh', 'uninstall.ps1', 'tools/*.sh', 'tools/check-i18n.py', 'i18n/**']
+    paths: ['install.sh', 'install.ps1', 'uninstall.sh', 'uninstall.ps1', 'tools/*.sh', 'tools/check-i18n.py', 'i18n/**', 'android/magisk/**']
 
 permissions:
   contents: read
@@ -22,7 +22,7 @@ jobs:
         run: python tools/check-i18n.py
       - name: Shell syntax
         shell: bash
-        run: for f in install.sh uninstall.sh tools/i18n.sh tools/self-update.sh tools/linux-mode.sh; do sh -n "$f"; done
+        run: for f in install.sh uninstall.sh tools/i18n.sh tools/self-update.sh tools/linux-mode.sh android/magisk/installer/mu300-install.sh android/magisk/installer/customize.sh tools/android-boot-image.sh tools/make-magisk-zips.sh; do sh -n "$f"; done
       - name: PowerShell 5.1 parse
         shell: powershell
         run: |

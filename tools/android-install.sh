@@ -1,12 +1,12 @@
 #!/system/bin/sh
-# Device side of install.sh (runs as root on Android). Settings come from /data/local/tmp/mu300-install.env:
+# Device side of install.sh (runs as root on Android). Settings come from $T/mu300-install.env (T below):
 #   OFF SIZE           free eMMC region (bytes) after the last GPT partition, as strings
 #   OFF_S SIZE_S       the same in 512-byte sectors (Android's mksh has 32-bit arithmetic: never compute with bytes)
 #   SD_MODE=0|1 SD_DEV with SD_MODE=1 the filesystem (label mu300sd) is the SD card block device SD_DEV instead of
 #                      that region; OFF/SIZE are then not used
 #   INTERNAL_EXISTS=0|1  with SD_MODE=1: an internal mu300root exists at OFF/SIZE and gets the root-on-sd marker
 #   FORMAT=0|1         create the ext4 filesystem (mu300root in the region, mu300sd on the card)
-#   OSES="ubuntu openwrt"  systems to (re)install from /data/local/tmp/mu300-<os>.tar.gz
+#   OSES="ubuntu openwrt"  systems to (re)install from $T/mu300-<os>.tar.gz
 #                      (plus mu300-vendor-<os>.tar.gz with the device's own vendor files for prebuilt images)
 #   WIPE_LEGACY=0|1    remove a first-generation Ubuntu that lives directly in the filesystem root
 #   UPDATE=0|1         keep the settings and user data of the systems being reinstalled
@@ -16,8 +16,11 @@
 #   PWHASH             SHA-512 crypt hash for the "ubuntu" (Ubuntu) and "root" (OpenWrt) accounts
 #   IMPORT_HOTSPOT=0|1 copy Android's hotspot SSID/passphrase into each system
 #   KERNEL=5.4|6.18|7.2  the kernel in the new boot image; mu300-update keeps installing that one (boot/kernel)
+# Extras pushed as $T/mu300-extra-<name>.tar.gz (the work directory, see below) go to extra/<name> on the Linux partition.
 set -e
-T=/data/local/tmp
+# install.sh pushes everything to /data/local/tmp. The Magisk installer runs this as root from a directory only root
+# can write (MU300_DEVICE_WORK): files in /data/local/tmp can be replaced by the shell user after they were checked.
+T=${MU300_DEVICE_WORK:-/data/local/tmp}
 . $T/mu300-install.env
 M=$T/mu300root
 say() { echo "[device] $*"; }
@@ -161,9 +164,47 @@ fi
 if [ "$WIPE_LEGACY" = 1 ] && { [ -x $M/lib/systemd/systemd ] || [ -L $M/lib ]; }; then
     say "removing the root-level Ubuntu"
     for e in $M/* $M/.[!.]*; do
-        case "${e##*/}" in lost+found|.mu300|ubuntu|openwrt) ;; *) rm -rf "$e" ;; esac
+        case "${e##*/}" in lost+found|.mu300|ubuntu|openwrt|extra) ;; *) rm -rf "$e" ;; esac
     done
 fi
+
+# --- extra begin
+# Extras (mu300-extra): optional parts on the Linux partition next to the systems, in DISK/extra/<name>.
+extra_from_push() {  # extra_from_push DISK: install the extras install.sh pushed ($T/mu300-extra-<name>.tar.gz)
+    for f in $T/mu300-extra-*.tar.gz; do
+        [ -f "$f" ] || continue
+        n=${f##*/mu300-extra-}; n=${n%.tar.gz}
+        x=$1/extra
+        rm -rf "$x/.$n.new"; mkdir -p "$x/.$n.new"
+        if tar -xzf "$f" -C "$x/.$n.new" 2>/dev/null && [ "$(cat "$x/.$n.new/name" 2>/dev/null)" = "$n" ]; then
+            rm -rf "$x/$n" && mv "$x/.$n.new" "$x/$n"
+            say "extra $n installed ($(cat "$x/$n/release" 2>/dev/null))"
+        else
+            rm -rf "$x/.$n.new"
+            say "extra $n: the pushed file is not usable, skipped (on the device later: mu300-extra install $n)"
+        fi
+        rm -f "$f"
+    done
+    return 0
+}
+extra_keep_vpn() {  # extra_keep_vpn DISK OLDROOT: the system being replaced uses the VPN with the engines of its image
+    # (older images had them in opt/mu300/bin): they stay, as the vpn extra, so the VPN comes back after the reboot
+    [ ! -d "$1/extra/vpn/bin" ] || return 0
+    grep -q '^ENABLE=1' "$2/etc/mu300/vpn.conf" 2>/dev/null || return 0
+    [ -x "$2/opt/mu300/bin/xray" ] || [ -x "$2/opt/mu300/bin/sing-box" ] || return 0
+    x=$1/extra
+    rm -rf "$x/.vpn.new"; mkdir -p "$x/.vpn.new/bin"
+    for e in xray hev-socks5-tunnel sing-box; do
+        if [ -x "$2/opt/mu300/bin/$e" ]; then cp -p "$2/opt/mu300/bin/$e" "$x/.vpn.new/bin/$e"; fi
+    done
+    echo vpn > "$x/.vpn.new/name"
+    cat "$2/etc/mu300/image-version" > "$x/.vpn.new/release" 2>/dev/null || echo unknown > "$x/.vpn.new/release"
+    echo "taken from the image of the previous system" > "$x/.vpn.new/components"
+    rm -rf "$x/vpn"; mv "$x/.vpn.new" "$x/vpn"
+    say "kept the VPN engines of the previous system as the vpn extra"
+}
+# --- extra end
+extra_from_push $M
 
 ssid=; psk=
 if [ "$IMPORT_HOTSPOT" = 1 ]; then
@@ -226,6 +267,7 @@ for os in $OSES; do
                 done ;;
         esac
         say "kept from the previous $os:$kept"
+        extra_keep_vpn $M $M/$os
         [ -n "$extra" ] && say "kept enabled services:$extra"
     fi
     rm -rf $M/$os && mv $M/$os.new $M/$os

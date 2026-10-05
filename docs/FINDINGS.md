@@ -1582,7 +1582,7 @@ the slot. The gate now lets the eMMC and the `sdio_sd` host through; `sdio_wifi`
 `/proc/device-tree/aliases` (read under 6.18.55) has no `mmc` entries at all, only cooling devices, `eth*`, `i2c*`,
 `serial*`, `spi*`, `v4-modem*` and a few others. The host numbers therefore come from the probe order, not from an
 alias: `mmc0` is `22200000.sdio` (the eMMC) and `mmc1` is `22210000.sdio` (the slot), under 6.18 and 5.4 alike.
-That the eMMC is `mmcblk0` is what init and the installers rely on when they look at `mmcblk[1-9]` for the card.
+That the eMMC is `mmcblk0` is what init and the installers rely on when they look at `mmcblk[1-9]` for the card - which under mainline held only by luck (31l).
 
 Phandle 0x170 is `gpio@2000c0`, `sprd,qogirn6pro-eic-sync`. Mainline's `sprd-eic` binds it, but as a chip of 24
 lines (`gpiochip3: 24 GPIOs`), and the slot's card detect is line 35: the lookup fails, `mmc_of_parse()` returns
@@ -1718,6 +1718,42 @@ on the card, the earlier installation still in the internal region.
 - **U30 Air.** No SD host at all: `/sys/class/mmc_host` holds `mmc0` only, `/sys/block` only `mmcblk0*` (Android,
   stock kernel). `sd_probe` finds nothing, and the installers never ask.
 
+### 31l. The card slot took mmc0
+31j's "`mmc0` is the eMMC by probe order" does not hold under mainline. On F50 #1 (6.18.55, OpenWrt on the card,
+2026-10-05), boot 19 of a 20-boot soft-reboot loop came up with the card on `mmc0` (`mmc0: new UHS-I speed SDR104
+SDHC card`, `mmcblk0: mmc0:aaaa SL32G`) and the eMMC on `mmc1` (`stage=persist-target dev=/dev/mmcblk1p38`). init
+then looked for the card on `mmcblk[1-9]` (the eMMC, no `mu300sd`) and for the internal region on `/dev/mmcblk0`,
+the card: the first candidate offset lies past the card's end, `dd bs=1 skip=` cannot seek there and busybox reads
+its way instead, byte by byte. No stage line after `usb-bind-done` for 297 s, then `stage=timer-reboot` at 302 s;
+the next boot was normal. From outside it looked like a hang (no SSH for 6 minutes).
+
+Both sdhci-sprd hosts probe asynchronously (`PROBE_PREFER_ASYNCHRONOUS`) and the index is taken in
+`sdhci_pltfm_init()`, first come first served. In the other 19 boots of that loop the two hosts registered 0.05 to
+20 ms apart (the slot's first in one of them, already holding index 1). Before the polled card slot (31j) the slot's
+host deferred on its card-detect GPIO and always came second.
+
+* Kernel port (`upstream/port/install.py`): the card slot's host returns `-EPROBE_DEFER` until the eMMC's host is
+  added (checked before `sdhci_pltfm_init()`, which allocates the index). The slot registers about 0.28 s after the
+  eMMC now, the card is set up at about 2.75 s instead of 2.45 s and `stage=sd-root` comes at 5.10 to 5.16 s instead
+  of 5.04 to 5.07 s.
+* init and the Linux tools no longer rely on the number: init takes the eMMC as the `mmcblk` disk whose card type
+  is `MMC` and the card candidates from the `SD` disks, looks for the region only on the eMMC and never past its
+  end, and writes `<eMMC>@<offset>` to `/run/mu300-root-dev` (`mu300-update` takes any `@` there for internal);
+  early-recorder and android-vendor-start find the eMMC's partitions by name or type. (The Android-side tools run
+  on the stock kernel, where the eMMC is `mmcblk0`, and are unchanged.)
+* Every Linux-side lookup by GPT name - init's `misc` and `boot_<slot>` (the BCB, the persistent log,
+  `/run/mu300/misc-dev` for mu300-next-boot), early-recorder's log partition, `mu300-update`'s kernel partition and
+  the `by-name` links - looks only at the eMMC: the disk of type `MMC`, else the first `mmcblk` disk that is not `SD`,
+  never a card. A card can carry the same names (a raw clone of a device backup) and would otherwise be written to.
+* `ueventd-perms.sh` no longer touches block devices by number: Android's `mmcblk1p*` rule (the card, for vold,
+  `root:system`) is dropped - no vendor daemon run here opens the card, and gid 1000 is the first user on Linux -
+  and `mmcblk0rpmb` became `mmcblk*rpmb` (only the eMMC has an RPMB partition).
+* The cost of the kernel wait: if the eMMC's host never binds, the card slot's host stays deferred, so there is no
+  root on the card without a working eMMC host.
+
+Verification on F50 #1 (6.18.55 with the port, OpenWrt on the card, soft reboots): the eMMC on `mmc0` in 20 boots
+of 20; the new init told the eMMC and the card apart correctly in 10 boots of 10.
+
 ### 31m. Hard hangs in the first seconds under 6.18 (open)
 Investigated on F50 #1 on 2026-10-05: OpenWrt on the card, soft-reboot loops from the Mac (`reboot`, SSH expected
 within 200 s). The boots of the card system had two temporary preinit hooks: a 1 s heartbeat into the kernel log
@@ -1725,7 +1761,7 @@ within 200 s). The boots of the card system had two temporary preinit hooks: a 1
 
 | kernel | boots | hard hangs | other |
 |---|---|---|---|
-| 6.18.55 #7 (f50-leds-fixes) | 20 | 1 (Mali probe, boot 12) | 1 init stall, the card on `mmc0` (31l on branch mmc-order-fix) |
+| 6.18.55 #7 (f50-leds-fixes) | 20 | 1 (Mali probe, boot 12) | 1 init stall, the card on `mmc0` (31l) |
 | main + the mmc fix, old init | 20 | 0 | - |
 | main + the mmc fix, new init | 10 | 1 (preinit, boot 1) | - |
 
@@ -2008,7 +2044,17 @@ from Android with mu300-linux is exactly that. The generic ramdisk segment, whic
 device segment, now carries an empty `etc/mu300-trial-guard` (a later file replaces an earlier one), and an
 experiment's guard goes into a segment of its own behind the generic one.
 
-### 33i. Two devices restored from one backup
+### 33i. A reboot "with the hotspot off" that never brought it back
+
+Reported: after rebooting from mu300-toolkit because the hotspot was on, SSH was gone. The toolkit's "join a
+network" offers exactly that reboot when the radio is the access point (this driver cannot turn an AP back into a
+station), and `wifi-client scan-mode on` left `/etc/mu300/wifi-scan-mode` in place until a network was joined: the
+hotspot stayed off at that boot and at every boot after, and whoever had come in over it had no way back but USB.
+The flag is now taken at boot into `/run` (mu300-wifi-scan-mode.service), for that boot only, a transient timer
+brings the hotspot back after 10 minutes when nothing was joined, and the toolkit says before the reboot that a
+session over the hotspot ends there and where to come back. Newer-release notes at login came in the same change.
+
+### 33j. Two devices restored from one backup
 
 A second F50 restored from the first one's backup came up with the same `androidboot.serialno` (the bootloader
 reads it from the restored data), so 33b's gadget identity was the same on both: the same USB serial number and
@@ -2026,7 +2072,7 @@ a new network adapter once - macOS sets up a new interface by itself (measured o
 and a computer that kept a setting for the old adapter (a fixed address, a firewall rule by MAC) has to be told about
 the new one.
 
-### 33j. Vendor driver fixes from the U30 Air test, measured
+### 33k. Vendor driver fixes from the U30 Air test, measured
 
 Before and after on the U30 Air (the "before" being the kernels of the overnight test), per boot:
 
