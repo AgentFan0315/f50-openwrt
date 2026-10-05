@@ -1797,6 +1797,79 @@ Ruled out or not reproduced on a running board:
 Still open: which access stalls the bus. A hang rate of about 2 in 50 boots needs a reproducer, or 100+ boots per
 variant, before a change (for example a delay or poll before the probe's first GPU read) can be measured.
 
+### 31n. Wi-Fi powered off and on at the same time: an Oops in the RX interrupt
+F50 #1, OpenWrt from the card on 6.18.55 (main's code), 20 soft reboots: one hang (boot 11). This one left pstore:
+```
+15.494580 sprd-wlan: Power off WCN (1 time)          <- end of the probe, wlan0 already registered
+15.494597 WCN PCIE: [+]mchn_deinit(7, 1)              ... 9, 11, 4, 5: about 24 ms each
+15.543125 sprd-wlan: iface 'wlan0' deleted            <- netifd: station iface out, AP iface in
+15.616675 ...  iface 'wlan0'(5c:7d:..) type 3 added
+15.627387 misc wlan wlan0: iface_open
+15.627393 misc wlan wlan0: Power on WCN (0 time)
+15.627399 WCN BASEstart_marlin [MARLIN_WIFI]
+15.627422 sprd-wlan: pcie_post_init: register 6 ops   <- while the probe is still in mchn_deinit(10)
+15.636823 sprd-wlan: ctx_id:0 cmd_id:9 [CMD_SYNC_VERSION]rsp received
+15.640183 WCN PCIE: [-]mchn_deinit(10)                <- the probe's power-off goes on: hif = NULL
+15.640193 WCN BASEstop_marlin [MARLIN_WIFI]
+15.648698 Unable to handle kernel paging request at virtual address 00000000000030b8
+pc : pcie_rx_handle+0x34/0x1e0 [sprd_wlan_combo]
+lr : mchn_hw_pop_link+0x8c/0xa0 [wcn_bsp]
+ mchn_hw_pop_link <- edma_rx_pop_isr <- hisrfunc <- msi_irq_handle <- sprd_pcie_msi_irq   (CPU 0, swapper)
+Kernel panic - not syncing: Fatal exception in interrupt
+```
+The board did not reset after `panic=5`; it came back in Android about 8 minutes later.
+
+The cause is in the driver, not the bus. `power_cnt` is atomic, the transitions behind it are not. The probe
+registers wlan0 and then powers the chip off from the probe thread, outside RTNL. OpenWrt's netifd replaced and
+opened the interface within 130 ms. The open's power-on saw the count at 0 and ran `start_marlin` + `post_init`
+while the probe's power-off was still in `post_deinit`. That power-off then finished: it cleared
+`sc2355_hif.hif` after `post_init` had set it, and `stop_marlin` powered the chip down under a live interface. The
+next RX MSI, on a channel the open had registered again, read `hif->rx_mgmt` through the NULL hif (`0x30b8`, a
+field offset from NULL). iface_open and iface_close are both under RTNL, so a hotspot or `wifi down/up` restart cannot do
+this; only the probe and remove can. main's PCIe post-init change (`wlan_combo-pcie-post-init-retry`) only
+restores the static channel table and did not widen the window. The 5.4 driver has the same code; Ubuntu's hostapd
+opens wlan0 about 10 s after the probe, which is why the Ubuntu boots never showed it.
+
+Fix, both kernels (`upstream/modules/sprd_wlan_combo`, `kernel/patches/wlan_combo-wcn-power-serialise.patch`):
+- `sprd_iface_set_power` holds a mutex (`hif->power_lock`) across the whole transition, so an open waits for the
+  probe's power-off and then powers on from scratch.
+- `pcie_rx_handle` drops a list that arrives without a context (no hif or no `rx_mgmt`) and logs once ("RX on
+  channel N with no Wi-Fi context"). The TX pop handlers and `pcie_rx_fill_mbuf` already had such checks on 6.18
+  (14c).
+- `sc2355_hif.hif` is published with a release store before the channels are registered, read with an acquire
+  load, and cleared only after they are unregistered.
+- Found in review:
+  - The probe's error paths and `remove` powered off after `sprd_core_free` had freed `priv`, and `hif` with it.
+    They now power off first.
+  - A power-on that failed in `post_init` or the version sync left the chip started with the count at 0, and
+    after a failed sync the channels stayed registered too. It is now undone the way a power-off does.
+
+Measured on F50-B (Ubuntu 24.04, 6.18.55 with the fix):
+- 30 soft reboots, each started only after `mu300-boot-ok` had confirmed the one before: 0 Oops, 0 "no Wi-Fi
+  context" lines, pstore empty, every boot confirmed.
+  - 14 boots in hotspot mode (AP up every time). A 15th, at 23:47, was the user unplugging the board and is not
+    counted.
+  - 16 boots as a Wi-Fi client (joined KEDI 5G every time). In these, a temporary unit opened wlan0 as soon as the
+    driver registered it, to recreate the pstore boot's timing (Ubuntu's hostapd opens about 10 s later).
+  - In all 16 the open came 1 to 16 ms after the probe's power-off began, about 140 ms before that power-off's
+    `stop_marlin`. That is the window of the Oops. In all 16 the open's `start_marlin` came after it.
+- 30 hotspot restarts (`systemctl restart mu300-hotspot`, a full WCN power-off and power-on each): AP up after
+  every one, 0 Oops.
+- The 6.18.55 and 7.2.9 modules build. The 5.4 patch applies after the others and compiles against the 5.4 tree;
+  the module link was not run.
+
+Not covered:
+- `edma_chn_deinit` (wcn_bsp) frees a channel's ring lock and mbuf pool after a bare `msleep(20)`, without masking
+  the channel or `synchronize_irq`.
+- `mchn_hw_pop_link` reads `mchn->ops[chn]` twice.
+- An MSI still running on another CPU while a channel is torn down is therefore still possible. It is pre-existing
+  and was not seen.
+- The 5.4 driver also lacks 6.18's TX-side checks (14c).
+
+31m's silent hangs (the SoC stops at the Mali probe or at `crng init done`, no log) do not match this: here the
+kernel logged an Oops and panicked. A chip powered down by `stop_marlin` under a live PCIe link could stall a bus
+access, though, so this fix may remove some of that class. Not shown.
+
 ## Updating on the device
 
 ### 32. Old kernels, an idle IPA, and an update that ended in Android
