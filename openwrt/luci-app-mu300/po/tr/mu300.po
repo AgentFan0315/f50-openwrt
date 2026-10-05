@@ -942,6 +942,9 @@ msgstr "Ağ kilitleri uygulanıyor: modem yeniden başlıyor (yaklaşık yarım 
 msgid "The AT channel is busy; the command was not sent, try again"
 msgstr "AT kanalı meşgul; komut gönderilmedi, yeniden deneyin"
 
+msgid "The modem did not answer in time; the command may still run, check before sending it again"
+msgstr "Modem zamanında yanıt vermedi; komut hâlâ çalışıyor olabilir, yeniden göndermeden önce denetleyin"
+
 msgid "The fresh parameter must be 0 or 1"
 msgstr "fresh parametresi 0 veya 1 olmalı"
 
