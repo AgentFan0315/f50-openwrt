@@ -126,9 +126,6 @@ msgstr "Oturum geçmişi (yeniden kullanmak için tıklayın)"
 msgid "(no output)"
 msgstr "(çıktı yok)"
 
-msgid "Error: %s"
-msgstr "Hata: %s"
-
 msgid "Request failed"
 msgstr "İstek başarısız"
 
