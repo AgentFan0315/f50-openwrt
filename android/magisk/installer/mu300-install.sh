@@ -440,6 +440,133 @@ write_example() {
     return 0
 }
 
+# ---- the password: never empty, never the image's. 12 characters without look-alikes, unless a trusted conf gives
+# one.
+PW_ALPHABET=abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789
+CRYPT_ITOA=./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
+random_chars() {  # random_chars ALPHABET N: bytes past the last whole multiple of the alphabet are skipped (no bias)
+    head -c 256 /dev/urandom | od -An -tu1 -v | awk -v a="$1" -v n="$2" '
+        BEGIN { l = length(a); lim = int(256 / l) * l }
+        { for (i = 1; i <= NF && got < n; i++) if ($i < lim) { s = s substr(a, $i % l + 1, 1); got++ } }
+        END { if (got < n) exit 1; print s }'
+}
+password_hash() {  # password_hash PASSWORD: SHA-512 crypt, password on stdin, as install.sh's sha512crypt.py makes it
+    _salt=$(random_chars "$CRYPT_ITOA" 16) || return 1
+    _h=$(printf '%s\n' "$1" | "$UBB" mkpasswd -m sha512 -S "$_salt" -P 0) || return 1
+    case $_h in "\$6\$$_salt\$"?*) printf '%s' "$_h" ;; *) return 1 ;; esac
+}
+# FILE written with what CONTENT_CMD prints, mode 600, never through a link someone placed there: a new file with a
+# random name is created exclusively in the same directory and renamed over FILE (rename replaces a link instead of
+# writing through it; a link to a directory is removed first, or mv would move the file into that directory)
+replace_file() {  # replace_file FILE CONTENT_CMD...
+    _rf=$1; shift
+    [ ! -d "$_rf" ] || [ -L "$_rf" ] || return 1
+    _rnd=$(head -c 8 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    _new=${_rf%/*}/.${_rf##*/}.$$.$_rnd
+    if ( umask 077; set -C; "$@" > "$_new" ) 2>/dev/null && [ -f "$_new" ] && [ ! -L "$_new" ] &&
+        chmod 600 "$_new" && rm -f "$_rf" && mv -f "$_new" "$_rf" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$_new" 2>/dev/null
+    return 1
+}
+
+# ---- build everything in $W before anything is written
+build_vendor() {
+    _miss=$(collect_firmware "$W/fw") || die "$(t 'these firmware files could not be read from the device:{1}' "$_miss")
+$(t 'Wi-Fi and Bluetooth need them; without them the system installs and boots but has no hotspot.')"
+    collect_subset "$D/subset-files.txt" "$W/subset" || die "$(t 'could not read the Android files the modem needs from this device')"
+    _gpu=
+    if [ "$GPU" = yes ]; then
+        if collect_gpu "$D/gpu-files.txt" "$W/gpu"; then _gpu=$W/gpu
+        else warn "$(t 'the Mali GPU files are incomplete on this device; installing without them')"; fi
+    fi
+    vendor_overlay "$OS" "$W/fw" "$W/subset" "$_gpu" "$W/mu300-vendor-$OS.tar.gz" || die "$(t 'could not pack the vendor files')"
+}
+build_boot() {
+    mkdir -p "$W/ramdisk/etc" "$W/boot"
+    echo "$DEVICE" > "$W/ramdisk/etc/mu300-device"
+    echo "$LINUX_SLOT" > "$W/ramdisk/etc/mu300-linux-slot"
+    bc_files "$LIVE_BC" "$W/ramdisk/etc" || die "$(t 'could not build the boot control blocks')"
+    cp -a "$W/subset" "$W/ramdisk/android" || die "$(t 'could not copy the Android files into the boot ramdisk')"
+    # Linux on slot a needs an init that knows it (Tasks 1-3); the init comes from the bundle's generic segment
+    if [ "$LINUX_SLOT" = a ]; then
+        "$MAGISKBOOT" decompress "$KB/ramdisk-generic.lz4" "$W/generic.cpio" >/dev/null 2>&1 &&
+            grep -q 'mu300-linux-slot' "$W/generic.cpio" ||
+            die "$(t 'Android runs from slot b, and the kernel of this zip cannot boot Linux from slot a yet; use a newer zip')"
+        rm -f "$W/generic.cpio"
+    fi
+    device_segment "$W/ramdisk" "$W/device.lz4" || die "$(t 'could not build the boot ramdisk (magiskboot)')"
+    linux_boot_image "$BOOT_ANDROID" "$KB" "$W/device.lz4" "$W/boot" || die "$(t 'could not build the boot image')"
+    # the Android-side switch arms a slot only when its image says loglevel=5 (Android's own say nothing)
+    [ "$(dd if="$W/boot/new" bs=1 skip=44 count=11 2>/dev/null | od -An -tx1 | tr -d ' \n')" = 6c6f676c6576656c3d3500 ] ||
+        die "$(t 'could not build the boot image')"
+    say "$(t 'boot image for slot {1}: kernel {2}, {3} bytes' "$LINUX_SLOT" "$(cat "$KB/kernel.release" 2>/dev/null || echo 5.4)" "$(( $(fsize "$W/boot/new") + $(fsize "$W/boot/vbmeta") ))")"
+}
+build_password() {
+    PW=${MU300_PASSWORD:-}
+    [ -n "$PW" ] || PW=$(random_chars "$PW_ALPHABET" 12) || die "$(t 'could not generate a password')"
+    PWHASH=$(password_hash "$PW") || die "$(t 'could not hash the password')"
+}
+
+# ---- install: the systems, then the boot image, then misc
+# mu300-install.env as install.sh writes it (storage.sh): OFF and INT_SIZE are the internal region, SIZE the region
+# or, in SD mode, the card
+install_env() {
+    OFF=$INT_OFF; SIZE=$INT_SIZE
+    if [ "$SD_MODE" = 1 ]; then SIZE=$SD_BYTES; fi
+    ( umask 077; write_install_env > "$W/mu300-install.env" ) || die "$(t 'could not write {1}' "$W/mu300-install.env")"
+}
+install_systems() {
+    say "$(t 'Installing {1} (this takes a few minutes)' "$OS")"
+    cp "$D/android-install.sh" "$D/android-mount-mu300root.sh" "$W/" || die "$(t 'could not copy the installer files')"
+    install_env
+    asw "$ANDROID_SH" "$W/android-install.sh" 2>&1 | tee "$W/device-install.log"
+    grep -q MU300-INSTALL-OK "$W/device-install.log" || die "$(t 'installation on the device failed; boot_{1} and misc were not changed' "$LINUX_SLOT")"
+    if [ -s "$KB/kernel.release" ]; then        # a mainline bundle: its modules into every system on the filesystem
+        mount_target "$W/mnt" || die "$(t 'could not mount the Linux filesystem for the kernel modules')"
+        DISK=$W/mnt MU300_NO_DEPMOD=1 kernel_modules_into_systems "$KB" ||
+            { umount_target "$W/mnt"; die "$(t 'could not install the kernel modules')"; }
+        sync
+        umount_target "$W/mnt" || die "$(t 'could not unmount the Linux filesystem from {1}' "$W/mnt")"
+    fi
+}
+install_boot() {
+    say "$(t 'Writing and verifying boot_{1}' "$LINUX_SLOT")"
+    write_boot "$BOOT_LINUX" "$(part_size "$BOOT_LINUX")" "$W/boot/new" "$W/boot/vbmeta" "$W/boot/newfooter" ||
+        die "$(t 'boot_{1} did not verify after writing; misc was not changed, so Android keeps booting' "$LINUX_SLOT")"
+}
+arm_linux() {  # the Linux slot's trial block, built from the misc block read at the start; misc must still hold that
+    _blk=$W/ramdisk/etc/misc-bc-slot-$LINUX_SLOT-trial.bin
+    [ "$(hex_at "$MISC" 2048 32)" = "$LIVE_BC" ] || die "$(t 'misc changed during the installation; Linux was not armed. Install the zip again.')"
+    dd if="$_blk" of="$MISC" bs=1 seek=2048 conv=notrunc 2>/dev/null; sync
+    [ "$(hex_at "$MISC" 2048 32)" = "$(od -An -tx1 -v "$_blk" | tr -d ' \n')" ] ||
+        die "$(t 'misc did not verify after writing; reboot normally, Android is not affected')"
+}
+pw_text() { printf 'MU300 Linux %s, %s\nuser: %s\npassword: %s\nDelete this file after the first login.\n' "$TAG" "$(date '+%Y-%m-%d %H:%M')" "$_users" "$PW"; }
+# a MU300_PASSWORD line in the trusted conf has done its job: it becomes a comment (the file stays root's, mode 600).
+# A key is matched as conf_load reads it (blanks around and inside it do not count); a conf inside the zip is never
+# edited.
+conf_drop_password() {
+    awk '{ l = $0; sub(/^[ \t]*/, "", l); k = l; sub(/=.*/, "", k); gsub(/[ \t]/, "", k)
+           if (index(l, "=") && k == "MU300_PASSWORD") print "# MU300_PASSWORD was used by the installer and removed"; else print }' "$TRUSTED_CONF"
+}
+report() {
+    _ip=192.168.77.1; [ "$DEVICE" != u30air ] || _ip=192.168.78.1
+    _users=root; [ "$OS" != ubuntu ] || _users=ubuntu
+    replace_file "$PW_FILE" pw_text || warn "$(t 'could not write {1}' "$PW_FILE")"
+    if [ "${SRC_MU300_PASSWORD:-}" = "$TRUSTED_CONF" ] && conf_trusted "$TRUSTED_CONF"; then
+        replace_file "$TRUSTED_CONF" conf_drop_password ||
+            warn "$(t 'could not remove MU300_PASSWORD from {1}; remove it by hand' "$TRUSTED_CONF")"
+    fi
+    echo
+    say "$(t 'Done. Reboot to start {1}.' "$BOOT_OS")"
+    echo "  $(t 'password for {1}: {2}   (also in {3}; delete that file after the first login)' "$_users" "$PW" "$PW_FILE")"
+    echo "  $(t 'USB network: {1}   SSH: {2}' "$_ip" "$_users@$_ip")"
+    echo "  $(t 'switch systems: mu300-os ubuntu|openwrt   back to Android: mu300-next-boot android')"
+    echo "  $(t 'If Linux does not start, the device returns to Android by itself.')"
+}
+
 main() {
     trap cleanup EXIT
     [ -n "$MU300_LANG" ] || MU300_LANG=$(android_lang)
@@ -458,6 +585,13 @@ main() {
     plan_choices
     plan_print
     if [ "${MU300_DRY_RUN:-}" = 1 ]; then say "$(t 'Dry run: nothing was written.')"; exit 3; fi
+    build_vendor
+    build_boot
+    build_password
+    install_systems
+    install_boot
+    arm_linux
+    report
 }
 [ -z "${MU300_LIB:-}" ] || return 0
 main "$@"

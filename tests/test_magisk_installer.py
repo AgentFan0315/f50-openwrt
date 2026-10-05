@@ -1,9 +1,11 @@
 """android/magisk/installer/mu300-install.sh: the installer a Magisk zip runs on the device. mu300-install.conf is
 read, never run; on a fake device (tests/fakedevice.py) it finds the model, the slots, where Linux goes and what is
-already there, and a refusal or a dry run writes nothing."""
+already there, and a refusal or a dry run writes nothing; an installation writes boot_<linux slot>, verifies it
+and arms misc last."""
 import hashlib
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -15,8 +17,8 @@ from pathlib import Path
 
 from fakedevice import UBB, FakeDevice
 from helpers import TOP, ShellTest
-from test_android_boot_image import MAGISKBOOT, fake_android_root
-from test_boot_image import HAVE_LZ4
+from test_android_boot_image import MAGISKBOOT, cpio_all, fake_android_root, ramdisk_of
+from test_boot_image import HAVE_LZ4, unlz4_legacy
 
 # the zip's mu300/ directory, entry -> source in this repository (None: made per zip). Task 10's zip builder copies
 # exactly these; its test compares the two lists.
@@ -62,6 +64,13 @@ def setUpModule():
 
 def tearDownModule():
     shutil.rmtree(_staged, ignore_errors=True)
+
+
+def busybox_has(applet):
+    if not BUSYBOX:
+        return False
+    r = subprocess.run([BUSYBOX, '--list'], capture_output=True, text=True)
+    return applet in r.stdout.split()
 
 
 def sha(path):
@@ -269,8 +278,16 @@ class InstallerCase(ShellTest):
         self.reset()
 
     def reset(self):
+        self.magiskboot = self.stubs / 'magiskboot'
         self.zip()
         self.device()
+
+    def no_magiskboot(self):
+        self.magiskboot = self.tmp / 'no-magiskboot'
+
+    def fake_install_hook(self, line):
+        """LINE runs inside the fake android-install.sh, before it says MU300-INSTALL-OK"""
+        (self.fake.root / 'install-hook').write_text(line + '\n')
 
     def device(self, **kw):
         shutil.rmtree(self.tmp / 'fake', ignore_errors=True)
@@ -340,8 +357,13 @@ class InstallerCase(ShellTest):
         snap['data/adb'] = sorted(p.name for p in (r / 'data/adb').iterdir())
         return snap
 
-    def nothing_written(self):
-        return self.snapshot() == self.before
+    def nothing_written(self, except_fs=False):
+        """EXCEPT_FS: the disks the Linux filesystem is on may have changed (the systems were installed)"""
+        now, before = self.snapshot(), dict(self.before)
+        if except_fs:
+            for d in ('mmcblk0', 'mmcblk1'):
+                now.pop(d, None); before.pop(d, None)
+        return now == before
 
     def work_dirs(self):
         return sorted((self.fake.root / 'data/adb').glob('mu300-magisk.*'))
@@ -356,7 +378,7 @@ class InstallerCase(ShellTest):
                 f.write_text(text)
                 f.chmod(0o600)
         self.before = self.snapshot()
-        env = self.fake.env(self.mu300, self.stubs / 'magiskboot')
+        env = self.fake.env(self.mu300, self.magiskboot)
         env['ZIPFILE'] = self.zipfile
         env.update(extra_env or {})
         return subprocess.run([BUSYBOX, 'sh', str(self.mu300 / 'install.sh')], capture_output=True, text=True,
@@ -634,6 +656,203 @@ class WorkDirectory(InstallerCase):
             self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
             self.assertEqual((old / 'mnt/home/precious').read_text(), 'a user file')
             self.assertTrue(self.nothing_written())
+
+
+class Install(InstallerCase):
+    """the whole installation: the systems, then boot_<linux slot> written and verified, then misc armed"""
+
+    def linux_image(self, slot):
+        img = (self.fake.root / 'dev/block/by-name' / f'boot_{slot}').read_bytes()
+        self.assertEqual(img[:8], b'ANDROID!')
+        # the marker the Android-side switch looks for before it arms a slot
+        self.assertEqual(img[44:44 + 1536], b'loglevel=5'.ljust(1536, b'\0'))
+        return cpio_all(unlz4_legacy(ramdisk_of(img)))
+
+    def password_of(self, out):
+        m = re.search(r'password for \w+: (\S+)', out)
+        self.assertTrue(m, out)
+        return m.group(1)
+
+    def test_full_install_internal(self):
+        r = self.run_installer()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        by = self.fake.root / 'dev/block/by-name'
+        self.assertEqual(sha(by / 'boot_a'), self.before['boot_a'])            # Android's partition untouched
+        files = self.linux_image('b')
+        self.assertEqual(files['etc/mu300-linux-slot'][1], b'b\n')
+        self.assertEqual(files['etc/mu300-device'][1], b'f50\n')
+        self.assertIn('android/vendor/bin/modem_control', files)
+        self.assertIn('init', files)                                           # from the bundle's generic segment
+        bc = (by / 'misc').read_bytes()[0x800:0x820]
+        self.assertEqual(bc, files['etc/misc-bc-slot-b-trial.bin'][1])         # armed: Linux trial on b
+        env = (self.fake.root / 'install.env').read_text()
+        for line in ('FORMAT=1', 'OSES="openwrt"', 'SD_MODE=0', 'DEFAULT_LINUX=1', 'BOOT_ATTEMPTS=5', 'KERNEL=6.18'):
+            self.assertIn(line, env)
+        self.assertRegex(env, r"PWHASH='\$6\$[./0-9A-Za-z]{16}\$")
+        pw = self.password_of(r.stdout)
+        self.assertRegex(pw, r'^[a-km-zA-HJ-NP-Z2-9]{12}$')
+        # the hash is the password's (the fake mkpasswd's "hash" is its first 10 bytes in hex)
+        self.assertIn(pw.encode().hex()[:20] + "'", env)
+        # root's file by default, mode 600; nothing on the shared storage
+        f = self.fake.root / 'data/adb/mu300-linux-password.txt'
+        self.assertEqual(f.stat().st_mode & 0o777, 0o600)
+        self.assertRegex(f.read_text(), rf'(?m)^password: {pw}$')
+        self.assertFalse((self.fake.root / 'sdcard/mu300-linux-password.txt').exists())
+        self.assertEqual(self.work_dirs(), [])                                 # proprietary staging gone
+
+    def test_slot_b_android(self):
+        self.device(slot='_b')
+        r = self.run_installer()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        by = self.fake.root / 'dev/block/by-name'
+        self.assertEqual(sha(by / 'boot_b'), self.before['boot_b'])            # Android's partition untouched
+        files = self.linux_image('a')
+        self.assertEqual(files['etc/mu300-linux-slot'][1], b'a\n')
+        self.assertEqual((by / 'misc').read_bytes()[0x800:0x820], files['etc/misc-bc-slot-a-trial.bin'][1])
+
+    def test_sd_card_install(self):
+        self.device(card=bytes(1 << 20))
+        r = self.run_installer(trusted='MU300_STORAGE=sd\nMU300_SD_ERASE=yes\n')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        by = self.fake.root / 'dev/block/by-name'
+        self.assertEqual(sha(by / 'boot_a'), self.before['boot_a'])
+        files = self.linux_image('b')
+        self.assertEqual((by / 'misc').read_bytes()[0x800:0x820], files['etc/misc-bc-slot-b-trial.bin'][1])
+        env = (self.fake.root / 'install.env').read_text()
+        self.assertIn('SD_MODE=1', env)
+        self.assertIn('SD_DEV=' + str(self.fake.root / 'dev/block/mmcblk1'), env)
+        # OFF/SIZE stay the internal region, as install.sh writes them (the root-on-sd marker needs it)
+        start = ((2048 + (8 << 21)) // 4096 + 1) * 4096
+        end = (((16 << 21) - 34) // 4096 - 1) * 4096
+        self.assertIn(f'OFF={start * 512}\nSIZE={(end - start) * 512}\n', env)
+        self.assertIn('FORMAT=1', env)
+
+    def test_android_side_runs_with_android_tools(self):
+        self.assertEqual(self.run_installer().returncode, 0)
+        for line in (self.fake.root / 'android-sh.log').read_text().splitlines():
+            self.assertTrue(line.startswith('ASH_STANDALONE= '), line)
+
+    def test_install_failure_leaves_boot_and_misc(self):
+        r = self.run_installer(extra_env={'FAKE_INSTALL_FAILS': '1'})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('boot_b and misc were not changed', r.stdout)
+        self.assertTrue(self.nothing_written(except_fs=True))
+
+    def test_misc_changed_meanwhile_is_not_armed(self):
+        # a stub android-install.sh that changes misc while "installing" (an OTA, another installer)
+        self.fake_install_hook('printf X | dd of="$FAKE/dev/block/by-name/misc" bs=1 seek=2060 conv=notrunc 2>/dev/null')
+        r = self.run_installer()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('misc changed during the installation', r.stdout)
+        self.assertNotEqual((self.fake.root / 'dev/block/by-name/misc').read_bytes()[0x800:0x802], b'_b')
+
+    def test_refusals_write_nothing(self):
+        for setup in (lambda: self.device(region=False), lambda: self.corrupt_payload(),
+                      lambda: self.device(model='Pixel 7'), lambda: self.no_magiskboot()):
+            self.reset(); setup()
+            self.assertEqual(self.run_installer().returncode, 1)
+            self.assertTrue(self.nothing_written())
+
+    def test_password_from_conf_is_used_and_removed(self):
+        conf = self.fake.root / 'data/adb/mu300-install.conf'
+        r = self.run_installer(trusted='MU300_BOOT_ATTEMPTS=3\nMU300_PASSWORD=correct horse\n')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.password_of(r.stdout), 'correct')                # shown (the line cuts at the blank)
+        self.assertIn('correct horse', (self.fake.root / 'data/adb/mu300-linux-password.txt').read_text())
+        self.assertIn('correct horse'.encode().hex()[:20], (self.fake.root / 'install.env').read_text())
+        text = conf.read_text()
+        self.assertNotIn('correct horse', text)
+        self.assertIn('MU300_BOOT_ATTEMPTS=3\n', text)                         # the other settings stay
+        self.assertIn('# MU300_PASSWORD was used by the installer and removed', text)
+        self.assertEqual(conf.stat().st_mode & 0o777, 0o600)
+        self.assertFalse(conf.is_symlink())
+        self.assertEqual(sorted(p.name for p in conf.parent.iterdir()),
+                         ['mu300-install.conf', 'mu300-linux-password.txt'])
+        # a conf inside the zip is never edited
+        (self.mu300 / 'mu300-install.conf').write_text('MU300_PASSWORD=battery staple\n')
+        self.assertEqual(self.run_installer().returncode, 0)
+        self.assertIn('battery staple', (self.mu300 / 'mu300-install.conf').read_text())
+
+    def test_password_file_on_the_shared_storage_only_when_trusted(self):
+        r = self.run_installer(conf='MU300_PASSWORD_FILE=sdcard\n')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse((self.fake.root / 'sdcard/mu300-linux-password.txt').exists())
+        self.assertTrue((self.fake.root / 'data/adb/mu300-linux-password.txt').exists())
+        self.device()
+        r = self.run_installer(trusted='MU300_PASSWORD_FILE=sdcard\n')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        f = self.fake.root / 'sdcard/mu300-linux-password.txt'
+        self.assertIn(self.password_of(r.stdout), f.read_text())
+        self.assertEqual(f.stat().st_mode & 0o777, 0o600)
+        self.assertFalse((self.fake.root / 'data/adb/mu300-linux-password.txt').exists())
+
+    def test_password_file_is_never_written_through_a_link(self):
+        victim = self.tmp / 'victim'
+        victim.write_text('not yours')
+        f = self.fake.root / 'sdcard/mu300-linux-password.txt'
+        f.symlink_to(victim)
+        r = self.run_installer(trusted='MU300_PASSWORD_FILE=sdcard\n')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(victim.read_text(), 'not yours')
+        self.assertFalse(f.is_symlink())
+        self.assertIn(self.password_of(r.stdout), f.read_text())
+
+    def test_payload_replaced_after_verification_is_not_installed(self):
+        # the zip changes under the installer once the payload is checked (magiskboot runs only after that): what
+        # gets installed is the checked copy
+        good = self.tmp / 'good.zip'
+        shutil.copy(self.zipfile, good)
+        self.corrupt_payload()
+        evil = self.tmp / 'evil.zip'
+        shutil.copy(self.zipfile, evil)
+        shutil.copy(good, self.zipfile)
+        self.stub('magiskboot-swap', f'cp "{evil}" "$ZIPFILE"; exec "{self.stubs}/magiskboot" "$@"')
+        self.magiskboot = self.stubs / 'magiskboot-swap'
+        r = self.run_installer()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(sha(self.zipfile), sha(evil))                         # the swap happened
+        want = re.search(r'SHA256_ROOTFS=(\w+)', (self.mu300 / 'manifest').read_text()).group(1)
+        installed = [l.split()[0] for l in (self.fake.root / 'installed.sha256').read_text().splitlines()]
+        self.assertEqual(installed, [want])
+
+    def test_mainline_modules_into_every_system(self):
+        self.existing_filesystem(systems=('ubuntu',))
+        r = self.run_installer()                                       # an OpenWrt 6.18 zip added to it
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        krel = self.kernel_release
+        self.assertTrue((self.fake.root / f'fs/ubuntu/lib/modules/{krel}/extra/mu300-test.ko').is_file())
+        self.assertTrue((self.fake.root / f'fs/openwrt/lib/modules/{krel}/mu300-test.ko').is_file())
+        self.assertEqual((self.fake.root / 'fs/home/precious').read_text(), 'a user file')
+        self.assertEqual((self.fake.root / 'mounts').read_text(), '')                 # unmounted again
+        self.assertEqual(self.work_dirs(), [])
+
+
+class Password(ShellTest):
+    def lib(self, shell, code):
+        return self.sh(shell, f'MU300_LIB=1 MU300_DIR="{INSTALLER_DIR}" MU300_UBB="busybox" . "{INSTALLER}"; ' + code)
+
+    @unittest.skipIf(not busybox_has('mkpasswd'), "this busybox has no mkpasswd")
+    def test_hash_is_sha512crypt(self):
+        # the bundled busybox's mkpasswd and tools/sha512crypt.py agree
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('s', TOP / 'tools' / 'sha512crypt.py')
+        m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+        for shell in self.each_shell():
+            r = self.lib(shell, 'password_hash "s3cret pw"')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            h = r.stdout.strip()
+            salt = h.split('$')[2]
+            self.assertEqual(len(salt), 16)
+            self.assertEqual(h, m.sha512_crypt('s3cret pw', salt))
+
+    def test_random_chars(self):
+        for shell in self.each_shell():
+            seen = set()
+            for _ in range(20):
+                r = self.lib(shell, 'random_chars "$PW_ALPHABET" 12')
+                self.assertRegex(r.stdout.strip(), r'^[a-km-np-zA-HJ-NP-Z2-9]{12}$')
+                seen.add(r.stdout)
+            self.assertEqual(len(seen), 20)
 
 
 if __name__ == '__main__':
