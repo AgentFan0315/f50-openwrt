@@ -272,7 +272,8 @@ calls that kernel does not have, the same rule as for `install.sh`. Check a down
 
 **3. Read the output.** It shows the device it found, where Linux goes, what it will write, and the password it
 generated. The password is also in `/data/adb/mu300-linux-password.txt` (mode 600; read it with
-`su -c cat /data/adb/mu300-linux-password.txt`, and delete the file after the first login).
+`su -c cat /data/adb/mu300-linux-password.txt`, and delete the file after the first login). A zip installed over a
+system that is already there (an update) keeps its accounts and passwords and says "unchanged".
 
 **4. Reboot.** Linux starts. If it does not, the device returns to Android by itself.
 
@@ -337,7 +338,7 @@ too: erasing an SD card needs `MU300_STORAGE=sd` and `MU300_SD_ERASE=yes` both t
 
 A setting that erases counts for one install: once a successful install has used `MU300_MODE=wipe`,
 `MU300_SD_ERASE=yes` or `MU300_REGION_OVERWRITE=yes` from `/data/adb/mu300-install.conf`, the installer turns that line
-into a comment (as it does with `MU300_PASSWORD`) and says so. Otherwise the next zip - the second of two, or an
+into a comment (as it does with `MU300_PASSWORD` and `MU300_PASSWORD_RESET`) and says so. Otherwise the next zip - the second of two, or an
 update - would wipe or erase again. For another erase, put the line back.
 
 | key | values | from | default |
@@ -351,7 +352,8 @@ update - would wipe or erase again. For another erase, put the line back.
 | `MU300_BOOT_ATTEMPTS` | `1` to `6` | either | `5` |
 | `MU300_HOTSPOT` | `yes`, `no` | either | `yes`: Android's hotspot name and password are copied |
 | `MU300_GPU` | `yes`, `no` | either | `yes` (skipped with a message when this device lacks a file of the GPU set) |
-| `MU300_PASSWORD` | 6 or more characters | `/data/adb` only | Generated: 12 characters from `/dev/urandom` without look-alikes |
+| `MU300_PASSWORD` | 6 or more characters | `/data/adb` only | Generated for a new system: 12 characters from `/dev/urandom` without look-alikes. An update keeps the existing password |
+| `MU300_PASSWORD_RESET` | `yes` | `/data/adb` only | Not set: an update keeps the existing password. `yes`: a new one is generated |
 | `MU300_PASSWORD_FILE` | `sdcard` | `/data/adb` only | Not set: the password file is `/data/adb/mu300-linux-password.txt` |
 | `MU300_DEVICE` | `f50`, `u30air` | `/data/adb` only | Detected; needed only for a model name the installer does not know |
 | `MU300_LANG` | `en`, `tr`, `zh` | either | The language of the Android locale |
@@ -367,12 +369,15 @@ su -c 'chmod 600 /data/adb/mu300-install.conf'
 
 Only look at what an install would do, with the file on `/sdcard`: `MU300_DRY_RUN=1` on a line of its own.
 
-**The password.** It is never empty and never the image's (`ubuntu`/`ubuntu`, OpenWrt's empty root). It is written to
+**The password.** It is never empty and never the image's (`ubuntu`/`ubuntu`, OpenWrt's empty root). An update
+keeps the accounts and passwords the system has, as `mu300-update` does: a password is made only for a system that has
+none of its own yet (a first install, a wipe, the second system next to the first), or when
+`/data/adb/mu300-install.conf` asks for one with `MU300_PASSWORD` or `MU300_PASSWORD_RESET=yes`. A new one is written to
 `/data/adb/mu300-linux-password.txt`, which only root reads, and shown in the Magisk output (between quotes) before
 anything is installed, so an install that stops later never leaves a password nobody has seen. Only a trusted
 `MU300_PASSWORD_FILE=sdcard` writes it to `/sdcard/mu300-linux-password.txt` instead, where every app with storage
-access can read it. A `MU300_PASSWORD` from `/data/adb/mu300-install.conf` is replaced by a comment in that file after
-a successful install.
+access can read it. A `MU300_PASSWORD` or `MU300_PASSWORD_RESET` from `/data/adb/mu300-install.conf` is replaced by a
+comment in that file after a successful install.
 
 ### Starting Linux from Android without a computer
 
@@ -540,7 +545,8 @@ operators and VPN servers often look like a different city.
    It mounts the Linux filesystem from Android and rewrites the password hash, keeping all your data.
 3. Start Linux again with `boot/android-boot-linux.sh work/boot-linux-slotb.img`, or reboot if Linux is the default.
 
-Re-running `./install.sh` and choosing **update** also sets a new password and keeps your data.
+Re-running `./install.sh` and choosing **update** keeps your data and sets the password you type (the Magisk zip's
+update keeps the old one unless `MU300_PASSWORD_RESET=yes` is in `/data/adb/mu300-install.conf`).
 
 **Downloads are slow.** GitHub's release CDN throttles single connections in some regions (0.2 MB/s on a
 180 Mbit/s line here). The installer already downloads in 8 parallel chunks, which measured 8x faster; set

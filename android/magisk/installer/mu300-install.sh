@@ -71,13 +71,13 @@ android_lang() {  # the language of the Android locale: tr, zh or en
 #   untrusted  /sdcard/mu300-install.conf or /sdcard/Download/mu300-install.conf (first found): any app with
 #              storage access can write these, so they choose only what destroys nothing and reveals nothing
 # Trusted values win.
-CONF_KEYS='MU300_STORAGE MU300_SD_ERASE MU300_REGION_OVERWRITE MU300_MODE MU300_BOOT_OS MU300_BOOT MU300_BOOT_ATTEMPTS MU300_HOTSPOT MU300_GPU MU300_PASSWORD MU300_PASSWORD_FILE MU300_DEVICE MU300_LANG MU300_DRY_RUN'
+CONF_KEYS='MU300_STORAGE MU300_SD_ERASE MU300_REGION_OVERWRITE MU300_MODE MU300_BOOT_OS MU300_BOOT MU300_BOOT_ATTEMPTS MU300_HOTSPOT MU300_GPU MU300_PASSWORD MU300_PASSWORD_RESET MU300_PASSWORD_FILE MU300_DEVICE MU300_LANG MU300_DRY_RUN'
 CONF_SET=
 conf_find() { for _f in "$SDCARD/mu300-install.conf" "$SDCARD/Download/mu300-install.conf"; do [ -f "$_f" ] && { echo "$_f"; return 0; }; done; return 0; }
 # erasing, formatting, overriding the model check and the password: only from a trusted file
 conf_trusted_only() {  # conf_trusted_only KEY VALUE
     case $1 in
-        MU300_SD_ERASE|MU300_REGION_OVERWRITE|MU300_PASSWORD|MU300_PASSWORD_FILE|MU300_DEVICE) return 0 ;;
+        MU300_SD_ERASE|MU300_REGION_OVERWRITE|MU300_PASSWORD|MU300_PASSWORD_RESET|MU300_PASSWORD_FILE|MU300_DEVICE) return 0 ;;
         MU300_MODE) [ "$2" = wipe ] ;;
         *) return 1 ;;
     esac
@@ -146,7 +146,7 @@ conf_valid() {  # conf_valid KEY VALUE: VALUE is exactly one this installer know
         MU300_BOOT_OS) case $2 in ubuntu|openwrt|openwrt-luci) return 0 ;; esac ;;
         MU300_BOOT) case $2 in linux|android) return 0 ;; esac ;;
         MU300_BOOT_ATTEMPTS) case $2 in [1-6]) return 0 ;; esac ;;
-        MU300_SD_ERASE|MU300_REGION_OVERWRITE) [ "$2" = yes ] && return 0 ;;
+        MU300_SD_ERASE|MU300_REGION_OVERWRITE|MU300_PASSWORD_RESET) [ "$2" = yes ] && return 0 ;;
         MU300_HOTSPOT|MU300_GPU) case $2 in yes|no) return 0 ;; esac ;;
         MU300_PASSWORD_FILE) [ "$2" = sdcard ] && return 0 ;;
         MU300_DEVICE) case $2 in f50|u30air) return 0 ;; esac ;;
@@ -374,11 +374,14 @@ $(t 'Take the card out and install the zip again, or install to the card (MU300_
     fi
     if [ "$SD_MODE" = 1 ] && [ "$FORMAT" = 1 ]; then USED_KEYS="$USED_KEYS MU300_SD_ERASE"; fi
 }
+# HAVE_ACCOUNTS: the system of this zip is there with accounts of its own (an /etc/shadow, and not the image's: an
+# older mu300-update leaves .mu300-accounts-from-image until they are carried over)
 inspect_target() {  # which systems the existing filesystem holds, and its Ubuntu release: mounted read-only
-    HAVE_SYSTEMS=; HAVE_UBUNTU=
+    HAVE_SYSTEMS=; HAVE_UBUNTU=; HAVE_ACCOUNTS=0
     [ "$existing" = yes ] && [ "$FORMAT" = 0 ] || return 0
     mount_target "$W/mnt" ro || die "$(t 'could not mount the existing Linux filesystem')"
     for _os in ubuntu openwrt openwrt-luci; do [ -d "$W/mnt/$_os" ] && HAVE_SYSTEMS="$HAVE_SYSTEMS $_os"; done
+    if [ -f "$W/mnt/$OS/etc/shadow" ] && [ ! -e "$W/mnt/$OS/etc/.mu300-accounts-from-image" ]; then HAVE_ACCOUNTS=1; fi
     HAVE_UBUNTU=$(sed -n 's/^VERSION_ID="\(.*\)"/\1/p' "$W/mnt/ubuntu/usr/lib/os-release" 2>/dev/null | head -n1)
     umount_target "$W/mnt" || die "$(t 'could not unmount the Linux filesystem from {1}' "$W/mnt")"
 }
@@ -397,6 +400,12 @@ plan_choices() {
     IMPORT_HOTSPOT=1; [ "${MU300_HOTSPOT:-yes}" = no ] && IMPORT_HOTSPOT=0
     GPU=${MU300_GPU:-yes}
     PW_FILE=$PW_FILE_ROOT; [ "${MU300_PASSWORD_FILE:-}" != sdcard ] || PW_FILE=$PW_FILE_SDCARD
+    # Update (keep) leaves the accounts and their passwords as they are, as mu300-update does: a password is made only
+    # for a system that has none of its own yet (a new filesystem, a wipe, a system added beside another), or when
+    # /data/adb/mu300-install.conf asks for one (MU300_PASSWORD, MU300_PASSWORD_RESET=yes: trusted only)
+    KEEP_PW=0
+    if [ "$UPDATE" = 1 ] && [ "${HAVE_ACCOUNTS:-0}" = 1 ] && [ -z "${MU300_PASSWORD:-}" ] &&
+        [ "${MU300_PASSWORD_RESET:-}" != yes ]; then KEEP_PW=1; fi
     # an if, not an && list: the last command's status is the function's, and set -e would stop main on it
     WIPE_LEGACY=0; if [ "$OS" = ubuntu ] && [ "$FORMAT" = 0 ]; then WIPE_LEGACY=1; fi
 }
@@ -416,7 +425,9 @@ plan_print() {
     echo "  $(t 'boot attempts:  {1} failed boots in a row, then Android ({2})' "$BOOT_ATTEMPTS" "$(src_of MU300_BOOT_ATTEMPTS)")"
     echo "  $(t 'hotspot:        {1} ({2})' "$([ "$IMPORT_HOTSPOT" = 1 ] && t 'name and password copied from Android' || t 'not copied')" "$(src_of MU300_HOTSPOT)")"
     echo "  $(t 'GPU files:      {1} ({2})' "$([ "$GPU" = yes ] && t 'included' || t 'not included')" "$(src_of MU300_GPU)")"
-    if [ -n "${MU300_PASSWORD:-}" ]; then
+    if [ "$KEEP_PW" = 1 ]; then
+        echo "  $(t 'password:       kept: the accounts and passwords of the installed system are not changed ({1} in {2} sets a new one)' "MU300_PASSWORD_RESET=yes" "$TRUSTED_CONF")"
+    elif [ -n "${MU300_PASSWORD:-}" ]; then
         echo "  $(t 'password:       from {1}, written to {2}' "$(src_of MU300_PASSWORD)" "$PW_FILE")"
     else
         echo "  $(t 'password:       generated, written to {1}' "$PW_FILE")"
@@ -462,6 +473,8 @@ write_example() {
         echo "#MU300_GPU=yes"
         echo "# (root) 6+ characters; empty: generated"
         echo "#MU300_PASSWORD="
+        echo "# (root) yes: a new generated password also when updating (an update keeps the existing one)"
+        echo "#MU300_PASSWORD_RESET=yes"
         echo "# (root) write the password to $PW_FILE_SDCARD instead of $PW_FILE_ROOT"
         echo "#MU300_PASSWORD_FILE=sdcard"
         echo "# (root) f50 or u30air, only when the model is not recognised"
@@ -540,6 +553,8 @@ build_boot() {
     say "$(t 'boot image for slot {1}: kernel {2}, {3} bytes' "$LINUX_SLOT" "$(cat "$KB/kernel.release" 2>/dev/null || echo 5.4)" "$(( $(fsize "$W/boot/new") + $(fsize "$W/boot/vbmeta") ))")"
 }
 build_password() {
+    PW=; PWHASH=
+    [ "$KEEP_PW" = 0 ] || return 0                # android-install.sh carries the accounts over
     PW=${MU300_PASSWORD:-}
     [ -n "$PW" ] || PW=$(random_chars "$PW_ALPHABET" 12) || die "$(t 'could not generate a password')"
     PWHASH=$(password_hash "$PW") || die "$(t 'could not hash the password')"
@@ -605,15 +620,19 @@ pw_text() {
         END { if (keep) printf "\n%s", b }' "$PW_FILE"
 }
 # between quotes: a password of the conf file may hold blanks
-pw_show() { echo "  $(t 'password for {1}: "{2}"   (also in {3}; delete that file after the first login)' "$_users" "$PW" "$PW_FILE")"; }
+pw_show() {
+    if [ "$KEEP_PW" = 1 ]; then echo "  $(t 'password for {1}: unchanged (the one this system had)' "$_users")"; return 0; fi
+    echo "  $(t 'password for {1}: "{2}"   (also in {3}; delete that file after the first login)' "$_users" "$PW" "$PW_FILE")"
+}
 # Shown and saved before anything is written: android-install.sh puts the hash into the systems, and a run that fails
 # or is killed after that must not leave a Linux whose password nobody has seen. No file, no installation.
 save_password() {
     _users=root; [ "$OS" != ubuntu ] || _users=ubuntu
+    [ "$KEEP_PW" = 0 ] || return 0                # nothing new to show or save; the file stays as it is
     replace_file "$PW_FILE" pw_text || die "$(t 'could not write {1}; nothing was installed' "$PW_FILE")"
     pw_show
 }
-# A MU300_PASSWORD line in the trusted conf, and an erasing setting this run used (USED_KEYS), have done their job:
+# A MU300_PASSWORD or MU300_PASSWORD_RESET line in the trusted conf, and an erasing setting this run used (USED_KEYS), have done their job:
 # each becomes a comment (the file stays root's, mode 600). A key is matched as conf_load reads it (blanks around and
 # inside it do not count); a conf inside the zip is never edited.
 conf_drop_used() {
@@ -625,7 +644,7 @@ conf_drop_used() {
 report() {
     _ip=192.168.77.1; [ "$DEVICE" != u30air ] || _ip=192.168.78.1
     _drop=
-    for _k in $USED_KEYS MU300_PASSWORD; do
+    for _k in $USED_KEYS MU300_PASSWORD MU300_PASSWORD_RESET; do
         eval "_s=\${SRC_$_k:-}"
         [ "$_s" != "$TRUSTED_CONF" ] || _drop="$_drop $_k"
     done

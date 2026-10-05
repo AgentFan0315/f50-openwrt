@@ -103,7 +103,7 @@ The child (`mu300-install.sh`) does, in this order, and writes nothing to the eM
 5. **Payload.** A work directory of this run only, `mktemp -d /data/adb/mu300-magisk.XXXXXX` (mode 700; see
    "Safety"), and free space checked there; the two payload files are copied out of the zip into it, and the copies
    are checked against the manifest's sha256. Only those copies are used.
-6. **Plan.** Storage, format/update, boot system, default boot, attempts, hotspot, GPU, password source. Printed in
+6. **Plan.** Storage, format/update, boot system, default boot, attempts, hotspot, GPU, password source (or kept). Printed in
    full, with the source of every value (default or the conf file). `MU300_DRY_RUN=1` stops here (exit 3; the
    module is not installed).
 7. **Build, all in the work directory.** Vendor files from this device (firmware, the modem_control
@@ -291,7 +291,8 @@ an untrusted `MU300_STORAGE=sd` would aim a standing erase at whatever card is i
 | `MU300_BOOT_ATTEMPTS` | `1`-`6` | any | `5` |
 | `MU300_HOTSPOT` | `yes`, `no` | any | `yes` (Android's hotspot name and password) |
 | `MU300_GPU` | `yes`, `no` | any | `yes` (skipped with a message when this device lacks a file of the closure) |
-| `MU300_PASSWORD` | 6+ characters | trusted only | generated |
+| `MU300_PASSWORD` | 6+ characters | trusted only | generated for a new system; an update keeps the existing password |
+| `MU300_PASSWORD_RESET` | `yes` | trusted only | not set: an update keeps the existing password; `yes` generates a new one |
 | `MU300_PASSWORD_FILE` | `sdcard` | trusted only | not set: the password file is `/data/adb/mu300-linux-password.txt` |
 | `MU300_DEVICE` | `f50`, `u30air` | trusted only | detected; needed only for a model name the installer does not know |
 | `MU300_LANG` | `en`, `tr`, `zh` | any | the Android locale |
@@ -314,7 +315,19 @@ block device, without `O_EXCL`.)
 
 ## Passwords
 
-Never empty, never the image's (`ubuntu`/`ubuntu`, OpenWrt's empty root).
+Never empty, never the image's (`ubuntu`/`ubuntu`, OpenWrt's empty root). An update (keep) leaves the accounts and
+their passwords as the device has them, as `mu300-update` does: the installer makes a password only for a system that
+has no accounts of its own yet (a new filesystem, a wipe, a system added beside another, or one whose accounts are
+still the image's: `.mu300-accounts-from-image`), or when a trusted file asks for one (`MU300_PASSWORD`, or
+`MU300_PASSWORD_RESET=yes` for a generated one).
+
+> Decision: on an update the installer passes no `PWHASH`, writes no password file (an existing one stays as it is)
+> and says "unchanged" where it would show the password; `android-install.sh` carries the accounts over with
+> `mu300-update`'s `merge_accounts` (a copy: it runs on Android and cannot source the new system's script; a test
+> keeps the two the same): the old entry of every account both systems have, the users and groups added on the
+> device. With a `PWHASH` (install.sh's update, or a reset) the merge runs too and the hash replaces only the
+> `ubuntu`/`root` entry. Rejected: a new password on every update (seen on the U30 Air: the user's own password was
+> replaced by a generated one, and SSH with it stopped working after an update that was meant to change nothing).
 
 > Decision: the installer generates 12 characters from `/dev/urandom` (alphabet without look-alikes: no 0/O, 1/l/I;
 > rejection sampling, so no bias) unless `MU300_PASSWORD` gives one of 6+ characters. It is hashed on the device to
@@ -324,8 +337,8 @@ Never empty, never the image's (`ubuntu`/`ubuntu`, OpenWrt's empty root).
 > read the output later, and `su -c cat` reads it) and shown in the Magisk output before anything is installed, and
 > shown again at the end, between quotes (a password of the conf file may hold blanks); the report says to delete
 > that file after the first login. Only `MU300_PASSWORD_FILE=sdcard` in a trusted file writes it to
-> `/sdcard/mu300-linux-password.txt` instead. `MU300_PASSWORD` itself is taken only from a trusted file, and a
-> `MU300_PASSWORD` line there is replaced by a comment once it has been used.
+> `/sdcard/mu300-linux-password.txt` instead. `MU300_PASSWORD` and `MU300_PASSWORD_RESET` are taken only from a
+> trusted file, and such a line there is replaced by a comment once it has been used.
 >
 > Rejected: writing it to `/sdcard` by default (every app with storage access could read the root password of a
 > device on the LAN; the file was meant to be deleted, and often would not be); an empty or fixed password (kanoqwq's empty root password); a forced change on first login (the account
@@ -514,6 +527,7 @@ On the devices (Task 14; the F50 test board and the U30 Air, both rooted with Ma
 | Android OTA later | the OTA writes the inactive slot - the Linux one - so Linux disappears and Android switches slot; installing the zip again puts Linux on the other slot (needs the opposite-slot work) |
 | old `mu300-next-boot` with Linux on slot a (a downgraded rootfs) | finds no legacy block files and writes nothing |
 | the conf file holds a password | used, then the line is replaced by a comment |
+| update of a system with accounts of its own | accounts and passwords kept (no `PWHASH`, the password file not touched); a trusted `MU300_PASSWORD` or `MU300_PASSWORD_RESET=yes` sets a new one |
 | the trusted conf holds `MU300_MODE=wipe`, `MU300_SD_ERASE=yes` or `MU300_REGION_OVERWRITE=yes` | once a successful run used it, the line is replaced by a comment; one the run did not use stays |
 | the module is removed in Magisk | only the switch goes; Linux stays and boots as configured |
 
