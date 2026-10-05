@@ -975,6 +975,43 @@ class Install(InstallerCase):
         self.assertFalse(f.is_symlink())
         self.assertIn(self.password_of(r.stdout), f.read_text())
 
+    def test_second_zip_keeps_the_first_systems_password(self):
+        # Both systems are two zips. The second one installs beside the first and leaves that system's password as
+        # it was, so the file must keep it: the first zip's output may be gone, and the file is the only other place
+        # (seen on the F50: the Ubuntu zip's file replaced the OpenWrt root password)
+        f = self.fake.root / 'data/adb/mu300-linux-password.txt'
+        r = self.run_installer()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        pw_root = self.password_of(r.stdout)
+        self.existing_filesystem(systems=('openwrt',))
+        self.zip(system='ubuntu-24.04', kernel='5.4')
+        r = self.run_installer()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        pw_ubuntu = self.password_of(r.stdout)
+        text = f.read_text()
+        self.assertIn(f'user: ubuntu\npassword: {pw_ubuntu}\n', text)
+        self.assertIn(f'user: root\npassword: {pw_root}\n', text)
+        self.assertTrue(text.startswith('MU300 Linux '))                       # the newest first
+        self.assertLess(text.index('user: ubuntu'), text.index('user: root'))
+        self.assertEqual(f.stat().st_mode & 0o777, 0o600)
+        # the first system again (an update): its new password replaces its old one, the other one stays
+        self.zip(system='openwrt')
+        r = self.run_installer()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        pw_root2 = self.password_of(r.stdout)
+        text = f.read_text()
+        self.assertEqual(text.count('user: root\n'), 1, text)
+        self.assertEqual(text.count('user: ubuntu\n'), 1, text)
+        self.assertIn(f'user: root\npassword: {pw_root2}\n', text)
+        self.assertIn(f'user: ubuntu\npassword: {pw_ubuntu}\n', text)
+        self.assertNotIn(f'password: {pw_root}\n', text)
+        # a wipe leaves one system: no password of the erased one
+        r = self.run_installer(trusted='MU300_MODE=wipe\n')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        text = f.read_text()
+        self.assertNotIn('user: ubuntu', text)
+        self.assertEqual(text.count('user: root\n'), 1, text)
+
     def test_payload_replaced_after_verification_is_not_installed(self):
         # the zip changes under the installer once the payload is checked (magiskboot runs only after that): what
         # gets installed is the checked copy
