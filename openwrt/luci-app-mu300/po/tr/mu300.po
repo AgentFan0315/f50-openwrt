@@ -75,6 +75,9 @@ msgstr "Kilitli"
 msgid "Lock"
 msgstr "Kilitle"
 
+msgid "Unknown error"
+msgstr "Bilinmeyen hata"
+
 msgid "Confirm"
 msgstr "Onayla"
 
@@ -123,14 +126,8 @@ msgstr "Oturum geçmişi (yeniden kullanmak için tıklayın)"
 msgid "(no output)"
 msgstr "(çıktı yok)"
 
-msgid "Error: %s (the AT channel is busy; the command was not sent)"
-msgstr "Hata: %s (AT kanalı meşgul; komut gönderilmedi)"
-
 msgid "Error: %s"
 msgstr "Hata: %s"
-
-msgid "Failed"
-msgstr "Başarısız"
 
 msgid "Request failed"
 msgstr "İstek başarısız"
@@ -218,9 +215,6 @@ msgstr "USB rolü değiştiriliyor…"
 
 msgid "Switch failed: %s"
 msgstr "Değiştirme başarısız: %s"
-
-msgid "Unknown error"
-msgstr "Bilinmeyen hata"
 
 msgid "Management connection lost; reconnect to confirm the USB role."
 msgstr "Yönetim bağlantısı kesildi; USB rolünü doğrulamak için yeniden bağlanın."
@@ -514,7 +508,7 @@ msgid "%s · Signal %s"
 msgstr "%s · Sinyal %s"
 
 msgid "Anchor B%s"
-msgstr "Bağlantı noktası B%s"
+msgstr "Ankraj hücresi B%s"
 
 msgid "No serving cell"
 msgstr "Bağlı olunan hücre yok"
@@ -541,7 +535,7 @@ msgid "Status %s"
 msgstr "Durum %s"
 
 msgid "LTE anchor"
-msgstr "LTE bağlantı noktası"
+msgstr "LTE ankraj hücresi"
 
 msgid "LTE link"
 msgstr "LTE bağlantısı"
@@ -667,10 +661,10 @@ msgid "Network mode: %s"
 msgstr "Ağ modu: %s"
 
 msgid "Disable EN-DC (NSA anchor)"
-msgstr "EN-DC’yi kapat (NSA bağlantı noktası)"
+msgstr "EN-DC’yi kapat (NSA ankraj hücresi)"
 
 msgid "Enable EN-DC (NSA anchor)"
-msgstr "EN-DC’yi aç (NSA bağlantı noktası)"
+msgstr "EN-DC’yi aç (NSA ankraj hücresi)"
 
 msgid "Disable apply at startup"
 msgstr "Başlangıçta uygulamayı kapat"
@@ -746,15 +740,6 @@ msgstr "EN-DC durumunun geri okuması zaman aşımına uğradı; doğrulamak iç
 
 msgid "Apply-at-startup status readback timed out; use “Refresh lock status” to confirm"
 msgstr "Başlangıçta uygulama durumunun geri okuması zaman aşımına uğradı; doğrulamak için “Kilit durumunu yenile”yi kullanın"
-
-msgid "Automatic (5G/4G)"
-msgstr "Otomatik (5G/4G)"
-
-msgid "5G SA only"
-msgstr "Yalnızca 5G SA"
-
-msgid "5G NSA only"
-msgstr "Yalnızca 5G NSA"
 
 msgid "Locked cells"
 msgstr "Kilitli hücreler"
@@ -903,11 +888,8 @@ msgstr "Gönderiliyor…"
 msgid "Sent; the list refreshes shortly."
 msgstr "Gönderildi; liste birazdan yenilenecek."
 
-msgid "Sending failed: %s (the AT channel is busy, try again shortly)"
-msgstr "Gönderme başarısız: %s (AT kanalı meşgul, birazdan yeniden deneyin)"
-
-msgid "Sending failed: %s"
-msgstr "Gönderme başarısız: %s"
+msgid "Sending failed"
+msgstr "Gönderme başarısız"
 
 msgid "· %d messages, %d unread · %d conversations"
 msgstr "· %d mesaj, %d okunmamış · %d görüşme"
@@ -923,3 +905,210 @@ msgstr "Ben: %s"
 
 msgid "Delete"
 msgstr "Sil"
+
+msgid "Dashboard info failed"
+msgstr "Gösterge paneli bilgisi alınamadı"
+
+msgid "Applying network locks: no live signal right now"
+msgstr "Ağ kilitleri uygulanıyor: şu anda canlı sinyal yok"
+
+msgid "Live signal read failed"
+msgstr "Canlı sinyal okunamadı"
+
+msgid "Unknown op"
+msgstr "Bilinmeyen işlem"
+
+msgid "Invalid argument for this op"
+msgstr "Bu işlem için geçersiz bağımsız değişken"
+
+msgid "The action gave no valid reply"
+msgstr "İşlem geçerli bir yanıt vermedi"
+
+msgid "An AT command is one line of printable ASCII, at most 512 characters"
+msgstr "AT komutu, en fazla 512 karakterlik tek satır yazdırılabilir ASCII olmalıdır"
+
+msgid "Must be an AT command"
+msgstr "Bir AT komutu olmalı"
+
+msgid "No \";\" command chaining"
+msgstr "\";\" ile komut zincirleme yapılamaz"
+
+msgid "Denied: this command wedges the AT port until a reboot"
+msgstr "Reddedildi: bu komut AT bağlantı noktasını yeniden başlatmaya kadar kilitler"
+
+msgid "Applying network locks: the modem is restarting (about half a minute), try again shortly"
+msgstr "Ağ kilitleri uygulanıyor: modem yeniden başlıyor (yaklaşık yarım dakika), birazdan yeniden deneyin"
+
+msgid "The AT channel is busy; the command was not sent, try again"
+msgstr "AT kanalı meşgul; komut gönderilmedi, yeniden deneyin"
+
+msgid "The fresh parameter must be 0 or 1"
+msgstr "fresh parametresi 0 veya 1 olmalı"
+
+msgid "Lock read failed"
+msgstr "Kilit durumu okunamadı"
+
+msgid "Unknown lock kind"
+msgstr "Bilinmeyen kilit türü"
+
+msgid "Invalid value for this lock kind"
+msgstr "Bu kilit türü için geçersiz değer"
+
+msgid "Invalid page"
+msgstr "Geçersiz sayfa"
+
+msgid "mu300-sms is not available (the SMS service is not installed or not running)"
+msgstr "mu300-sms kullanılamıyor (SMS hizmeti kurulu değil veya çalışmıyor)"
+
+msgid "No output"
+msgstr "Çıktı yok"
+
+msgid "Bad ID"
+msgstr "Geçersiz kimlik"
+
+msgid "Read failed"
+msgstr "Okuma başarısız"
+
+msgid "The number may only contain digits (and a leading +)"
+msgstr "Numara yalnızca rakam içerebilir (başta + olabilir)"
+
+msgid "The message is empty"
+msgstr "Mesaj boş"
+
+msgid "The message is too long (over 480 characters)"
+msgstr "Mesaj çok uzun (480 karakterden fazla)"
+
+msgid "The message contains a control character"
+msgstr "Mesaj bir denetim karakteri içeriyor"
+
+msgid "The sim parameter must be 0 or 1"
+msgstr "sim parametresi 0 veya 1 olmalı"
+
+msgid "The USB adapter (device-usb) gave no valid reply"
+msgstr "USB bağdaştırıcısı (device-usb) geçerli bir yanıt vermedi"
+
+msgid "The auto parameter must be 0 or 1"
+msgstr "auto parametresi 0 veya 1 olmalı"
+
+msgid "Invalid USB role"
+msgstr "Geçersiz USB rolü"
+
+msgid "A USB role takes no scope"
+msgstr "USB rolü kapsam almaz"
+
+msgid "Invalid USB network mode"
+msgstr "Geçersiz USB ağ modu"
+
+msgid "Invalid USB network scope"
+msgstr "Geçersiz USB ağ süresi"
+
+msgid "Unknown USB setting"
+msgstr "Bilinmeyen USB ayarı"
+
+msgid "Invalid interface name"
+msgstr "Geçersiz arayüz adı"
+
+msgid "Request too large"
+msgstr "İstek çok büyük"
+
+msgid "No such method"
+msgstr "Böyle bir yöntem yok"
+
+msgid "Radio did not come up"
+msgstr "Radyo açılmadı"
+
+msgid "Expected on or off"
+msgstr "on veya off bekleniyor"
+
+msgid "VPN integration is not provided by this platform"
+msgstr "Bu platform VPN tümleştirmesi sağlamıyor"
+
+msgid "Dual-boot integration is not provided by this platform"
+msgstr "Bu platform çift önyükleme tümleştirmesi sağlamıyor"
+
+msgid "mu300-next-boot failed"
+msgstr "mu300-next-boot başarısız oldu"
+
+msgid "AT backend did not answer (radio off, modem restarting, or adapter unavailable)"
+msgstr "AT arka ucu yanıt vermedi (radyo kapalı, modem yeniden başlıyor veya bağdaştırıcı kullanılamıyor)"
+
+msgid "USB role adapter is not executable"
+msgstr "USB rol bağdaştırıcısı çalıştırılabilir değil"
+
+msgid "USB role adapter failed"
+msgstr "USB rol bağdaştırıcısı başarısız"
+
+msgid "USB role switch is unavailable"
+msgstr "USB rol anahtarı kullanılamıyor"
+
+msgid "USB role switch failed"
+msgstr "USB rol değişimi başarısız"
+
+msgid "USB role switch was refused by platform safety checks"
+msgstr "USB rol değişimi platform güvenlik denetimi tarafından reddedildi"
+
+msgid "Cannot create USB boot settings directory"
+msgstr "USB açılış ayarları dizini oluşturulamıyor"
+
+msgid "Cannot write USB boot settings"
+msgstr "USB açılış ayarları yazılamıyor"
+
+msgid "Cannot save USB boot settings"
+msgstr "USB açılış ayarları kaydedilemiyor"
+
+msgid "Invalid boot-auto value"
+msgstr "Geçersiz otomatik başlatma değeri"
+
+msgid "Device is the boot default; host auto-apply is the only persistent role"
+msgstr "Cihaz modu açılış varsayılanıdır; yalnızca ana makine otomatik uygulaması kalıcıdır"
+
+msgid "Cannot save USB role policy"
+msgstr "USB rol ilkesi kaydedilemiyor"
+
+msgid "Cannot disable USB network boot policy"
+msgstr "USB ağı açılış ilkesi kapatılamıyor"
+
+msgid "Cannot commit USB role policy"
+msgstr "USB rol ilkesi uygulanamıyor"
+
+msgid "USB network mode is unavailable in host role"
+msgstr "Ana makine rolünde USB ağ modu kullanılamaz"
+
+msgid "Disable host boot-auto before configuring USB network"
+msgstr "USB ağını yapılandırmadan önce ana makine otomatik başlatmasını kapatın"
+
+msgid "Cannot save USB network policy"
+msgstr "USB ağ ilkesi kaydedilemiyor"
+
+msgid "Cannot commit USB network policy"
+msgstr "USB ağ ilkesi uygulanamıyor"
+
+msgid "USB host mode is required"
+msgstr "USB ana makine modu gerekli"
+
+msgid "Not a USB network interface"
+msgstr "USB ağ arayüzü değil"
+
+msgid "LAN bridge device section was not found"
+msgstr "LAN köprü aygıtı bölümü bulunamadı"
+
+msgid "Cannot bring USB network interface up"
+msgstr "USB ağ arayüzü etkinleştirilemiyor"
+
+msgid "Cannot add interface to LAN bridge"
+msgstr "Arayüz LAN köprüsüne eklenemiyor"
+
+msgid "Cannot save LAN bridge"
+msgstr "LAN köprüsü kaydedilemiyor"
+
+msgid "Network reload failed"
+msgstr "Ağ yeniden yüklenemedi"
+
+msgid "Cannot attach USB interface to LAN bridge"
+msgstr "USB arayüzü LAN köprüsüne bağlanamıyor"
+
+msgid "Lock cache unavailable"
+msgstr "Kilit önbelleği kullanılamıyor"
+
+msgid "No serving cell to lock to"
+msgstr "Kilitlenecek hizmet hücresi yok"
