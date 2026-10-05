@@ -360,8 +360,9 @@ The device can send its own traffic **and** everything from connected clients th
 engine is [Xray](https://github.com/XTLS/Xray-core) behind [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel)
 on a kernel TUN; `ENGINE=sing-box` in the config switches back to sing-box. Links that ask for `allowInsecure`
 work: Xray 26 dropped that option, so the server's certificate is fetched once, pinned, and re-fetched by itself
-when the server renews it. The kill switch (`KILL_SWITCH=1`) only works with `ENGINE=sing-box` for now; an
-existing configuration that has it on stays on sing-box after an update.
+when the server renews it. The kill switch (`KILL_SWITCH=1`) needs sing-box: with it on, sing-box runs even when
+`ENGINE=xray` is set, and when the engines are missing it stays up while they are downloaded (only the device
+itself, only to the release hosts, for 15 minutes at most); nothing that fails takes it down.
 
 The engines (about 120 MB) are not part of the systems: they are the **vpn extra**, which you add once - the
 installer asks, or on the device:
