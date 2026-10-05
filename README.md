@@ -389,6 +389,7 @@ time). The device then uses that network for itself and shares it with its USB c
 ```sh
 sudo wifi-client scan                    # the networks in range: signal, security, name
 sudo wifi-client connect "NAME"          # asks for the password; nothing is shown as you type
+sudo wifi-client connect "NAME" --open   # an open network
 sudo wifi-client status
 sudo wifi-client disconnect              # the hotspot comes back, and stays after a reboot
 sudo wifi-client reconnect               # join the saved network again
@@ -407,10 +408,16 @@ sudo wifi-client forget                  # delete the saved network
 * **WPA2 and WPA2/WPA3 mixed networks work; WPA3-only ones do not.** The scan labels them `WPA3` (`WPA2/3` is mixed
   mode, joined as WPA2), and `connect` refuses them as soon as it sees one: this Wi-Fi driver has no SAE. Set the
   router to WPA2/WPA3 mixed mode to join it. (A driver that has SAE is used with it.)
-* **Sharing**: Ubuntu turns on forwarding and masquerades on `wlan0` (nftables table `ip mu300_wifi_nat`, removed
-  on disconnect); nothing from the other network is let into the LAN but answers. OpenWrt adds `wlan0` to the
-  `wan` firewall zone, which masquerades and blocks incoming connections. With the [VPN](#vpn) on, clients still
-  go through the tunnel, and its kill switch covers `wlan0` as it does the modem.
+* **Sharing, and what it does not share**: USB clients reach the internet through the network, and only the
+  internet: its own devices and router (private, link-local and CGNAT addresses, and its subnet) are not reachable
+  from the LAN, so a guest on the device's USB does not end up on your home or hotel network. From that network
+  only ping and answers come in: SSH and the device's other services are closed to it, as they are to the modem
+  (use USB to reach the device). Ubuntu: nftables tables `ip mu300_wifi_nat` and
+  `inet mu300_wifi_filter`, removed on disconnect. OpenWrt: `wlan0` joins the `wan` firewall zone, plus a rule
+  (`mu300-wifi-client-private`) for the private addresses. With the [VPN](#vpn) on, clients still go through the
+  tunnel, and its kill switch covers `wlan0` as it does the modem.
+* Names are shown as the network sends them when they are printable UTF-8; control characters, terminal escape
+  sequences and bytes that are not UTF-8 are shown as `\xNN`.
 * The Wi-Fi route has metric 50 and mobile data 100, so with both the Wi-Fi is used and the SIM stays idle.
 
 ### Updating
