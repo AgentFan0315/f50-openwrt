@@ -1,7 +1,7 @@
 [Unit]
 Description=MU300 join the saved Wi-Fi network (station mode; stops the hotspot while connected)
 ConditionPathExists=/etc/mu300/wifi-client.conf
-After=mu300-wifi.service
+After=mu300-wifi.service mu300-lan.service
 Wants=mu300-wifi.service
 Before=mu300-hotspot.service
 
