@@ -3,12 +3,13 @@
 # (adb + su); it mounts the Linux filesystem from Android and rewrites the password hash in /etc/shadow. With an
 # installation on the SD card (ext4 labelled mu300sd) that one is changed: it is the one that boots.
 #
-#   tools/reset-password.sh [ubuntu|openwrt|both]      (default: both)
+#   tools/reset-password.sh [ubuntu|openwrt|openwrt-luci|all]      (default: all; both is an alias of all)
 #
 # Forgot the password and Linux boots by default? Unplug the device about ten seconds after it powers on and plug
 # it back in: the bootloader sees an unfinished boot and falls back to Android, then run this.
 set -eu
-WHICH=${1:-both}
+WHICH=${1:-all}
+[ "$WHICH" = both ] && WHICH=all
 TOP=$(cd "$(dirname "$0")/.." && pwd)
 T=/data/local/tmp
 
@@ -19,7 +20,7 @@ su_do() { adb shell "su -c '$1'" </dev/null | tr -d '\r'; }
 t() { printf '%s' "$1"; }
 gib() { awk -v b="$1" 'BEGIN { printf "%.1f GiB", b / 1073741824 }'; }
 
-case $WHICH in ubuntu|openwrt|both) ;; *) die "usage: $0 [ubuntu|openwrt|both]" ;; esac
+case $WHICH in ubuntu|openwrt|openwrt-luci|all) ;; *) die "usage: $0 [ubuntu|openwrt|openwrt-luci|all]" ;; esac
 command -v adb >/dev/null || die "adb not found"
 command -v python3 >/dev/null || die "python3 not found"
 . "$TOP/tools/linux-mode.sh"
@@ -63,7 +64,7 @@ echo "$out" | grep -q '^MOUNTED' || die "could not mount the Linux filesystem ($
 trap 'su_do "sync; sh '"$T"'/android-mount-mu300root.sh -u '"$T"'/mu300root" >/dev/null 2>&1 || true' EXIT
 
 systems=$WHICH
-[ "$WHICH" = both ] && systems="ubuntu openwrt"
+[ "$WHICH" = all ] && systems="ubuntu openwrt openwrt-luci"
 found=
 for os in $systems; do
     [ "$(su_do "[ -f $T/mu300root/$os/etc/shadow ] && echo y")" = y ] && found="$found $os"
@@ -71,14 +72,14 @@ done
 [ -n "$found" ] || die "no installed system found on the Linux filesystem"
 echo " systems:$found"
 
-printf 'New password for "ubuntu" (Ubuntu) and "root" (OpenWrt): '
+printf 'New password for "ubuntu" (Ubuntu) and "root" (OpenWrt, openwrt-luci): '
 [ -t 0 ] && stty -echo; read -r pw1; printf '\nRepeat: '; read -r pw2; [ -t 0 ] && stty echo; echo
 [ "$pw1" = "$pw2" ] && [ ${#pw1} -ge 6 ] || die "passwords differ or are shorter than 6 characters"
 HASH=$(printf '%s\n' "$pw1" | python3 "$TOP/tools/sha512crypt.py")
 case $HASH in \$6\$*) ;; *) die "could not build the password hash" ;; esac
 
 for os in $found; do
-    case $os in ubuntu) user=ubuntu ;; openwrt) user=root ;; esac
+    case $os in ubuntu) user=ubuntu ;; openwrt|openwrt-*) user=root ;; esac
     # the hash contains $ and /, which the device shell would expand inside su -c: edit the file on this computer
     tmp=$(mktemp)
     adb shell "su -c 'cat $T/mu300root/$os/etc/shadow > /data/local/tmp/mu300-pull.bin'" </dev/null >/dev/null

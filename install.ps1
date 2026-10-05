@@ -442,6 +442,17 @@ function ChooseStorage([string]$SdDev, [int64]$SdBytes, [int64]$InternalBytes, [
     if ($Answer -eq 'internal' -or $Answer -eq 'sd') { return $Answer }
     throw 'invalid choice'
 }
+# The systems a choice stands for (1 Ubuntu, 2 OpenWrt, 3 both), the way install.sh's choose_systems has them. OpenWrt is
+# plain (1) or with the MU300 control panel (2, "openwrt-luci" then stands in the list instead of "openwrt"); $Preset
+# is MU300_OPENWRT (plain|luci) and answers without asking, an empty $Which is the default (plain).
+function ChooseOpenWrt([string[]]$Oses, [string]$Preset, [string]$Which) {
+    if ($Preset) {
+        if ($Preset -eq 'plain') { $Which = '1' } elseif ($Preset -eq 'luci') { $Which = '2' } else { throw 'MU300_OPENWRT must be plain or luci' }
+    } elseif (-not $Which) { $Which = '1' }
+    if ($Which -ne '1' -and $Which -ne '2') { throw 'invalid choice' }
+    if ($Which -eq '2') { return @($Oses | ForEach-Object { if ($_ -eq 'openwrt') { 'openwrt-luci' } else { $_ } }) }
+    return @($Oses)
+}
 # boot/init starts a mu300sd card before anything on the eMMC: an internal installation made while such a card is
 # in the slot never starts, so that choice needs the typed word (storage.sh's internal_over_card)
 function InternalOverCard([string]$Where, [string]$SdState) { return ($Where -eq 'internal' -and $SdState -eq 'yes') }
@@ -603,6 +614,18 @@ switch (Ask (T 'Choice') '3') {
     '3' { $OSES = @('ubuntu', 'openwrt') }
     default { Die (T 'invalid choice') }
 }
+if ($OSES -contains 'openwrt') {
+    $owPreset = [string]$env:MU300_OPENWRT
+    if ($owPreset -and $owPreset -notin 'plain', 'luci') { Die (T 'MU300_OPENWRT must be plain or luci') }
+    $owAnswer = ''
+    if (-not $owPreset) {
+        Say (T 'Which OpenWrt?')
+        Write-Host ('  ' + (T '1) OpenWrt {1}: the standard LuCI web interface' '25.12.5'))
+        Write-Host ('  ' + (T '2) OpenWrt {1} with the MU300 control panel: dashboard, cellular locks, SMS, AT terminal, USB modes (by kanoqwq)' '25.12.5'))
+        $owAnswer = Ask (T 'Choice') '1'
+    }
+    try { $OSES = @(ChooseOpenWrt $OSES $owPreset $owAnswer) } catch { Die (T 'invalid choice') }
+}
 $need = if ($OSES.Count -eq 2) { $NEED_BOTH } elseif ($OSES[0] -eq 'ubuntu') { $NEED_UBUNTU } else { $NEED_OPENWRT }
 if ($SIZE -lt $need) {
     $needMib = [int64]($need / 1MB); $haveMib = [int64]($SIZE / 1MB)
@@ -610,8 +633,8 @@ if ($SIZE -lt $need) {
 }
 $BOOT_OS = $OSES[0]
 if ($OSES.Count -eq 2) {
-    $BOOT_OS = Ask (T 'Which one should boot (ubuntu/openwrt)') 'ubuntu'
-    if ($BOOT_OS -notin @('ubuntu', 'openwrt')) { Die (T 'invalid system') }
+    $BOOT_OS = Ask (T 'Which one should boot ({1})' ($OSES -join '/')) $BOOT_OS
+    if ($BOOT_OS -notin $OSES) { Die (T 'invalid system') }
 }
 $UBUNTU = '24.04'
 if ($OSES -contains 'ubuntu') {
@@ -891,6 +914,6 @@ if ((SuDo 'magisk -v')) {
 Say (T 'Done. Rebooting into {1}' $BOOT_OS)
 $ip = if ($DEVICE -eq 'u30air') { '192.168.78.1' } else { '192.168.77.1' }
 Write-Host ('  ' + (T 'USB network: {1}   SSH: {2}' $ip $(if ($BOOT_OS -eq 'ubuntu') { "ubuntu@$ip" } else { "root@$ip, LuCI http://$ip" })))
-Write-Host ('  ' + (T 'switch systems: mu300-os ubuntu|openwrt   back to Android: mu300-next-boot android'))
+Write-Host ('  ' + (T 'switch systems: mu300-os {1}   back to Android: mu300-next-boot android' ($OSES -join '|')))
 Write-Host ('  ' + (T 'back to Linux from Android (with Magisk): su -c mu300-linux'))
 & adb reboot | Out-Null

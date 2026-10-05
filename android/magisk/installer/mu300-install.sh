@@ -143,7 +143,7 @@ conf_valid() {  # conf_valid KEY VALUE: VALUE is exactly one this installer know
     case $1 in
         MU300_STORAGE) case $2 in internal|sd) return 0 ;; esac ;;
         MU300_MODE) case $2 in update|wipe) return 0 ;; esac ;;
-        MU300_BOOT_OS) case $2 in ubuntu|openwrt) return 0 ;; esac ;;
+        MU300_BOOT_OS) case $2 in ubuntu|openwrt|openwrt-luci) return 0 ;; esac ;;
         MU300_BOOT) case $2 in linux|android) return 0 ;; esac ;;
         MU300_BOOT_ATTEMPTS) case $2 in [1-6]) return 0 ;; esac ;;
         MU300_SD_ERASE|MU300_REGION_OVERWRITE) [ "$2" = yes ] && return 0 ;;
@@ -378,7 +378,7 @@ inspect_target() {  # which systems the existing filesystem holds, and its Ubunt
     HAVE_SYSTEMS=; HAVE_UBUNTU=
     [ "$existing" = yes ] && [ "$FORMAT" = 0 ] || return 0
     mount_target "$W/mnt" ro || die "$(t 'could not mount the existing Linux filesystem')"
-    for _os in ubuntu openwrt; do [ -d "$W/mnt/$_os" ] && HAVE_SYSTEMS="$HAVE_SYSTEMS $_os"; done
+    for _os in ubuntu openwrt openwrt-luci; do [ -d "$W/mnt/$_os" ] && HAVE_SYSTEMS="$HAVE_SYSTEMS $_os"; done
     HAVE_UBUNTU=$(sed -n 's/^VERSION_ID="\(.*\)"/\1/p' "$W/mnt/ubuntu/usr/lib/os-release" 2>/dev/null | head -n1)
     umount_target "$W/mnt" || die "$(t 'could not unmount the Linux filesystem from {1}' "$W/mnt")"
 }
@@ -640,7 +640,7 @@ report() {
     say "$(t 'Done. Reboot to start {1}.' "$BOOT_OS")"
     pw_show
     echo "  $(t 'USB network: {1}   SSH: {2}' "$_ip" "$_users@$_ip")"
-    echo "  $(t 'switch systems: mu300-os ubuntu|openwrt   back to Android: mu300-next-boot android')"
+    echo "  $(t 'switch systems: mu300-os {1}   back to Android: mu300-next-boot android' "$(echo $_after | tr ' ' '|')")"
     echo "  $(t 'If Linux does not start, the device returns to Android by itself.')"
     # the zip holds the release's systems and kernel only: the VPN engines are the vpn extra (mu300-extra), a
     # download of its own (a reinstall over a system that uses the VPN keeps that system's engines: android-install.sh)

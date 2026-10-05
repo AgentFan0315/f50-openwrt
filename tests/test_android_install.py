@@ -1,8 +1,10 @@
 """tools/android-install.sh: the SD card branch, cut out between its markers and run with stubs for Android's
 tools (sm, mke2fs, umount) and files standing in for block devices."""
+import io
 import os
 import re
 import shutil
+import tarfile
 
 from helpers import TOP, ShellTest
 from test_boot_init import fake_ext4
@@ -331,3 +333,85 @@ class Extras(ShellTest):
         self.assertIn('\nextra_from_push $M\n', SRC)
         # the engines are taken before the old system is removed
         self.assertLess(SRC.index('extra_keep_vpn $M $M/$os'), SRC.index('rm -rf $M/$os && mv $M/$os.new $M/$os'))
+
+def make_tar(path, files):
+    with tarfile.open(path, 'w:gz') as t:
+        for name, text in files.items():
+            data = text.encode()
+            ti = tarfile.TarInfo(name)
+            ti.size = len(data)
+            t.addfile(ti, io.BytesIO(data))
+
+
+class Systems(ShellTest):
+    """The wipe of a root-level Ubuntu and the per-system install loop, run on a fake /data/local/tmp (T) and a
+    fake mounted filesystem (M)."""
+
+    def setUp(self):
+        super().setUp()
+        self.T = self.tmp / 'T'
+        self.M = self.T / 'mu300root'
+        (self.M / '.mu300').mkdir(parents=True)
+        # Android's sed has -i like GNU's; the Mac's wants an argument
+        real = shutil.which('sed')   # resolved before the stubs are on PATH; /usr/bin/sed is not there on Alpine
+        self.stub('sed', f'S={real}\nif [ "$1" = -i ]; then shift; if "$S" --version >/dev/null 2>&1; then exec "$S" -i "$@"; '
+                         'else exec "$S" -i "" "$@"; fi; fi; exec "$S" "$@"')
+        self.wipe = self.block('legacy-wipe')
+        self.install = self.block('install-os')
+
+    def block(self, name):
+        m = re.search(rf'# --- {name} begin\n(.*?)# --- {name} end', SRC, re.S)
+        self.assertIsNotNone(m, f'android-install.sh has no {name} block')
+        return m.group(1)
+
+    def tarball(self, os, extra=None):
+        files = {'etc/shadow': 'root:*:19000:0:99999:7:::\nubuntu:*:19000:0:99999:7:::\n', 'etc/config/network': 'new\n'}
+        files.update(extra or {})
+        make_tar(self.T / f'mu300-{os}.tar.gz', files)
+
+    def run_install(self, shell, **env):
+        e = dict(OSES='openwrt-luci', UPDATE='0', PWHASH='', DEFAULT_LINUX='0', BOOT_OS='openwrt-luci', WIPE_LEGACY='0')
+        e.update(env)
+        # sd_unmark and extra_keep_vpn are other blocks of the script (SdCard and Extras test them)
+        pre = ('set -e\nsay() { echo "[device] $*"; }\nsd_unmark() { :; }\nextra_keep_vpn() { :; }\nssid=; psk=\n'
+               + f'T="{self.T}"; M="{self.M}"\n')
+        r = self.sh(shell, pre + self.install, **e)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        return r
+
+    def test_installs_openwrt_luci(self):
+        for shell in self.each_shell():
+            shutil.rmtree(self.M / 'openwrt-luci', ignore_errors=True)
+            self.tarball('openwrt-luci')
+            self.run_install(shell, PWHASH='$6$salt$hash')
+            self.assertTrue((self.M / 'openwrt-luci' / 'etc' / 'config' / 'network').exists())
+            shadow = (self.M / 'openwrt-luci' / 'etc' / 'shadow').read_text()
+            self.assertIn('root:$6$salt$hash:', shadow)
+            self.assertIn('ubuntu:*:', shadow)
+            self.assertEqual((self.M / '.mu300' / 'boot-os').read_text().strip(), 'openwrt-luci')
+            self.assertFalse((self.T / 'mu300-openwrt-luci.tar.gz').exists())
+
+    def test_update_keeps_openwrt_luci_config(self):
+        for shell in self.each_shell():
+            old = self.M / 'openwrt-luci' / 'etc' / 'config'
+            old.mkdir(parents=True, exist_ok=True)
+            (old / 'network').write_text('mine\n')
+            self.tarball('openwrt-luci')
+            self.run_install(shell, UPDATE='1')
+            self.assertEqual((self.M / 'openwrt-luci' / 'etc' / 'config' / 'network').read_text(), 'mine\n')
+
+    def test_legacy_wipe_keeps_openwrt_luci(self):
+        (self.M / 'lib' / 'systemd').mkdir(parents=True)
+        (self.M / 'lib' / 'systemd' / 'systemd').write_text('x'); (self.M / 'lib' / 'systemd' / 'systemd').chmod(0o755)
+        (self.M / 'etc').mkdir()
+        (self.M / 'openwrt-luci' / 'etc').mkdir(parents=True)
+        (self.M / 'ubuntu').mkdir()
+        for shell in self.each_shell():
+            self.sh(shell, f'say() {{ :; }}; M="{self.M}"; WIPE_LEGACY=1\n' + self.wipe)
+            self.assertTrue((self.M / 'openwrt-luci' / 'etc').is_dir())
+            self.assertTrue((self.M / 'ubuntu').is_dir())
+            self.assertTrue((self.M / '.mu300').is_dir())
+            self.assertFalse((self.M / 'lib').exists())
+            self.assertFalse((self.M / 'etc').exists())
+            (self.M / 'lib' / 'systemd').mkdir(parents=True)
+            (self.M / 'lib' / 'systemd' / 'systemd').write_text('x'); (self.M / 'lib' / 'systemd' / 'systemd').chmod(0o755)

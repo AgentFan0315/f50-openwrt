@@ -103,7 +103,7 @@ for u in mu300-vendor.service:sysinit.target mu300-lan.service:multi-user.target
          mu300-extra-modules.service:multi-user.target mu300-hotspot.service:multi-user.target \
          mu300-bluetooth.service:multi-user.target mu300-thermal-guard.service:multi-user.target \
          mu300-firewall.service:sysinit.target mu300-kmsg.service:sysinit.target mu300-toolkit.service:multi-user.target \
-         mu300-atd.service:multi-user.target \
+         mu300-atd.service:multi-user.target mu300-atd2.service:multi-user.target \
          systemd-networkd.service:multi-user.target systemd-resolved.service:multi-user.target; do
     svc=${u%%:*}; tgt=${u##*:}
     mkdir -p $R/etc/systemd/system/$tgt.wants
