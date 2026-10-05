@@ -918,6 +918,9 @@ msgstr "Bilinmeyen işlem"
 msgid "Invalid argument for this op"
 msgstr "Bu işlem için geçersiz bağımsız değişken"
 
+msgid "The radio is busy: the dial or the watchdog is switching it, try again shortly"
+msgstr "Radyo meşgul: bağlantı kurulumu ya da izleyici (watchdog) onu değiştiriyor, birazdan yeniden deneyin"
+
 msgid "The action gave no valid reply"
 msgstr "İşlem geçerli bir yanıt vermedi"
 
