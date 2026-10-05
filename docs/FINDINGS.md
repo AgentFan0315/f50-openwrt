@@ -1681,8 +1681,8 @@ on the card, the earlier installation still in the internal region.
   in the Mali driver under 6.18, or the power may have dropped at that moment (the board has no battery, and its
   cable was found to need replugging later the same night). Which of the two is open.
   It came back on 2026-10-05 with 6.18.55 #7 (the IPA thread fix of 31e), on a soft reboot from the card after
-  eight good boots of that kernel on F50 #1 (four from the card, two of the internal system, two after arming from
-  Android): the board did not enumerate (the dock port showed "connect" and never "enable"), and a power cycle of
+  four good boots of that kernel on F50 #1 (two from the card, two of the internal system; one of each after arming
+  from Android): the board did not enumerate (the dock port showed "connect" and never "enable"), and a power cycle of
   that port (which does not cut the board's power on this dock) did not bring it back. About 20 minutes later it
   was in Android on its own: LK found slot b at `tries_remaining 1` (armed at 6), so five boots had not reached the
   system's 30 s mark. The last of them (`console-ramoops`) had found the card (`stage=sd-root` at 5.06 s), switched
