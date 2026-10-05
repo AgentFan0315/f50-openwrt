@@ -103,7 +103,7 @@ context with an address on `sipa_eth0`. Measured on the device:
 AT         -> OK                                   AT+CFUN?  -> +CFUN: 1
 AT+CPIN?   -> +CPIN: READY                         AT+CSQ    -> +CSQ: 37,20
 AT+CEREG?  -> +CEREG: 2,1,"C300","00E07F53",13     AT+COPS?  -> +COPS: 0,2,"28602",13
-mobile data up on sipa_eth0 (28602)                sipa_eth0  UP  10.x.x.x/8
+mobile data up on sipa_eth0                        sipa_eth0  UP  10.x.x.x/8
 ```
 
 ### What was wrong: the shared memory was mapped write-back

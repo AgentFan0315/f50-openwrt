@@ -10,7 +10,7 @@ LK (slot b, tries=2) ─► custom 5.4 kernel + vendor_boot DTB
    └─► initramfs /init (boot/init)
          ├─ load 85 modules in a fixed order (boot/module-order.txt)
          ├─ misc: restore slot a, unless the rootfs says default-boot=linux
-         ├─ bind USB gadget: NCM, else ECM (usb0 up immediately) + ACM console; MU300_USBNET="rndis ncm" adds RNDIS first
+         ├─ bind USB gadget: NCM, else ECM (usb0 up immediately) + ACM console; MU300_USBNET="rndis" binds RNDIS as the one configuration with the console, and replaces the other network function (rndis wins in either order of "rndis ncm")
          ├─ losetup -o 27762098176 /dev/mmcblk0 → ext4 "mu300root" (free space after userdata)
          └─ switch_root → systemd
                ├─ mu300-vendor   : Android modem_control in a chroot (disarms PM watchdog, boots modem)
@@ -110,3 +110,25 @@ copies the current Android hotspot into it before the first boot, otherwise a ra
 From Android, `boot/android-boot-linux.sh boot-linux-slotb.img` boots the image already on `boot_b` again without reflashing.
 If Linux ever fails before `mu300-boot-ok` runs, LK sees `tries_remaining=1` on the next boot and falls back to Android.
 
+## OpenWrt with the MU300 control panel (`openwrt-luci`)
+
+`openwrt/build-rootfs.sh` builds all OpenWrt-like systems; `MU300_SYSTEM` picks one (default `openwrt`):
+```sh
+MU300_SYSTEM=openwrt-luci openwrt/build-rootfs.sh mu300-openwrt-luci-rootfs.tar.gz
+```
+It is the plain OpenWrt build plus `openwrt/luci-overlay/` (SMS pool, the dashboard's AT channels, IPv6 relay mode,
+first-boot defaults), the app in `openwrt/luci-app-mu300/` and the Aurora theme. It is built on OpenWrt only:
+`MU300_SYSTEM=openwrt-luci` with `MU300_FLAVOUR=immortalwrt` is refused.
+
+* `MU300_LUCI_THEME_APK` - a local copy of the pinned Aurora `.apk` (`luci-theme-aurora-1.4.0-r20260920.apk`) for
+  offline builds; without it the build downloads the file. The SHA256 it is checked against is pinned in the script and
+  cannot be overridden.
+* `tools/po2lmo.py IN.po OUT.lmo` compiles the app's `po/*/mu300.po` into the `.lmo` catalogs LuCI loads
+  (standard-library Python, byte for byte what LuCI's own `po2lmo` writes; `tests/fixtures/po2lmo` holds the
+  reference files). The app has no plural messages and no `msgctxt`; the tool refuses both.
+* `tools/luci-i18n.py check|extract|update` keeps `po/tr` and `po/zh_Hans` in step with the messages in the app's
+  JavaScript, menu, ACL and backend (missing, stale, placeholder and stray CJK problems). `python3 tools/check-i18n.py`
+  does the same for the installers' `i18n/*.tsv`.
+
+`tools/make-release.sh` builds the `mu300-openwrt-luci-rootfs.tar.gz` asset next to the other images and audits it
+like them. The asset boots from `/openwrt-luci` on the Linux disk.
