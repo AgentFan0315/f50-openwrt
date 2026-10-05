@@ -267,6 +267,9 @@ for os in $OSES; do
     say "installing $os"
     rm -rf $M/$os.new && mkdir $M/$os.new
     tar -xzpf $tarball -C $M/$os.new
+    # the account the installer gives a password (ubuntu, OpenWrt's root) and its hash in the image
+    case $os in ubuntu) pwu=ubuntu ;; *) pwu=root ;; esac
+    imghash=$(sed -n "s/^$pwu:\([^:]*\):.*/\1/p" $M/$os.new/etc/shadow 2>/dev/null | head -n1) || imghash=
     # prebuilt images: firmware and Android userspace pulled from this device by install.sh (tools/vendor-overlay.py)
     if [ -f $T/mu300-vendor-$os.tar.gz ]; then
         tar -xzpf $T/mu300-vendor-$os.tar.gz -C $M/$os.new
@@ -321,6 +324,20 @@ for os in $OSES; do
         extra_keep_vpn $M $M/$os
         [ -n "$extra" ] && say "kept enabled services:$extra"
     fi
+    # The password, before the new system replaces the old one: the hash just chosen, or (an update without one) the
+    # one carried over. Fail closed: a system whose account would be left with no hash, an empty one, the image's
+    # default or the image's accounts is not installed, and the old one stays.
+    if [ -n "$PWHASH" ]; then
+        rm -f $M/$os.new$ACCOUNTS_MARK   # the password is the one just chosen, not one to carry over
+        sed -i "s|^$pwu:[^:]*:|$pwu:$PWHASH:|" $M/$os.new/etc/shadow
+    fi
+    h=$(sed -n "s/^$pwu:\([^:]*\):.*/\1/p" $M/$os.new/etc/shadow 2>/dev/null | head -n1) || h=
+    case $h in '$'?*) ;; *) h= ;; esac
+    if [ -z "$h" ] || [ -e $M/$os.new$ACCOUNTS_MARK ] || { [ -z "$PWHASH" ] && [ "$h" = "$imghash" ]; }; then
+        rm -rf $M/$os.new
+        say "$os: $pwu would keep no password of its own (empty, the image's default, or none to carry over); $os was not replaced"
+        exit 1
+    fi
     rm -rf $M/$os && mv $M/$os.new $M/$os
     R=$M/$os
     if [ "${SD_MODE:-0}" = 1 ]; then sd_fstab $R; fi
@@ -332,13 +349,6 @@ for os in $OSES; do
         umask 022
     fi
     if [ "$DEFAULT_LINUX" = 1 ]; then echo linux > $R/etc/mu300/default-boot; else rm -f $R/etc/mu300/default-boot; fi
-    if [ -n "$PWHASH" ]; then
-        rm -f $R$ACCOUNTS_MARK   # the password is the one just chosen, not one to carry over
-        case $os in
-            ubuntu) sed -i "s|^ubuntu:[^:]*:|ubuntu:$PWHASH:|" $R/etc/shadow ;;
-            openwrt|openwrt-*) sed -i "s|^root:[^:]*:|root:$PWHASH:|" $R/etc/shadow ;;
-        esac
-    fi
     rm -f $tarball
 done
 mkdir -p $M/.mu300

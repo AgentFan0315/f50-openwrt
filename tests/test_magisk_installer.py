@@ -407,7 +407,7 @@ class InstallerCase(ShellTest):
         (.mu300-accounts-from-image: an older mu300-update installed it and never carried them over)"""
         etc = self.fake.root / 'fs' / system / 'etc'
         etc.mkdir(parents=True, exist_ok=True)
-        (etc / 'shadow').write_text('root:*:19000::::::\nubuntu:$6$theirs$hash:19000::::::\n')
+        (etc / 'shadow').write_text('root:$6$theirs$root:19000::::::\nubuntu:$6$theirs$hash:19000::::::\n')
         if marked:
             (etc / '.mu300-accounts-from-image').write_text('')
 
@@ -1082,7 +1082,15 @@ class Install(InstallerCase):
             ('image accounts', lambda: (self.existing_filesystem(systems=('openwrt',)),
                                         self.accounts('openwrt', marked=True)), None),
             # a system without an /etc/shadow (damaged): nothing to keep
-            ('no shadow', lambda: self.existing_filesystem(systems=('openwrt',)), None))
+            ('no shadow', lambda: self.existing_filesystem(systems=('openwrt',)), None),
+            # the images' well-known ubuntu/ubuntu (the fake mkpasswd's hash of "ubuntu" with that salt)
+            ('default password', lambda: (self.existing_filesystem(systems=('openwrt',)),
+                                          (self.fake.root / 'fs/openwrt/etc/shadow').write_text(
+                                              'root:$6$abc$' + b'ubuntu'.hex() + ':19000::::::\n')), None),
+            # root has no password of its own (OpenWrt's image leaves it empty; locked or missing alike)
+            ('no hash', lambda: (self.existing_filesystem(systems=('openwrt',)),
+                                 (self.fake.root / 'fs/openwrt/etc/shadow').write_text('root::19000::::::\nubuntu:$6$x$y:1::\n')),
+             None))
         for name, target, trusted in cases:
             with self.subTest(name):
                 self.reset()

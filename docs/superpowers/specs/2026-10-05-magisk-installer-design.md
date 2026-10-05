@@ -326,7 +326,11 @@ still the image's: `.mu300-accounts-from-image`), or when a trusted file asks fo
 > `mu300-update`'s `merge_accounts` (a copy: it runs on Android and cannot source the new system's script; a test
 > keeps the two the same): the old entry of every account both systems have, the users and groups added on the
 > device. With a `PWHASH` (install.sh's update, or a reset) the merge runs too and the hash replaces only the
-> `ubuntu`/`root` entry. Rejected: a new password on every update (seen on the U30 Air: the user's own password was
+> `ubuntu`/`root` entry. Kept is only a real crypt hash of the system's own: an empty, locked or missing entry, a
+> hash equal to the image's or (SHA-crypt, checked with the bundled `mkpasswd`) of the images' "ubuntu", an
+> unreadable shadow or accounts still marked as the image's get a generated password instead. `android-install.sh`
+> fails closed as well: without a `PWHASH` it installs a system only when its account ends up with a real hash that
+> is not the image's, otherwise the old system stays, the install stops and the boot image is never armed. Rejected: a new password on every update (seen on the U30 Air: the user's own password was
 > replaced by a generated one, and SSH with it stopped working after an update that was meant to change nothing).
 
 > Decision: the installer generates 12 characters from `/dev/urandom` (alphabet without look-alikes: no 0/O, 1/l/I;

@@ -374,14 +374,35 @@ $(t 'Take the card out and install the zip again, or install to the card (MU300_
     fi
     if [ "$SD_MODE" = 1 ] && [ "$FORMAT" = 1 ]; then USED_KEYS="$USED_KEYS MU300_SD_ERASE"; fi
 }
-# HAVE_ACCOUNTS: the system of this zip is there with accounts of its own (an /etc/shadow, and not the image's: an
-# older mu300-update leaves .mu300-accounts-from-image until they are carried over)
+# HAVE_ACCOUNTS: the system of this zip is there with accounts of its own: its user (ubuntu, OpenWrt's root) has a
+# crypt hash in /etc/shadow (not empty, not locked) that is not the image's default, and they are not the image's
+# accounts (an older mu300-update leaves .mu300-accounts-from-image until they are carried over). Anything else, a
+# shadow that cannot be read included, gets a new password: an update never keeps a default or an empty one.
+image_hash() {  # image_hash USER: USER's hash in the image this zip installs
+    { tar -xzOf "$W/mu300-$OS.tar.gz" ./etc/shadow 2>/dev/null || tar -xzOf "$W/mu300-$OS.tar.gz" etc/shadow 2>/dev/null; } |
+        sed -n "s/^$1:\([^:]*\):.*/\1/p" | head -n1
+}
+default_hash() {  # default_hash USER HASH: HASH is the image's own password (this image's hash, or a SHA-crypt hash of
+    # the images' well-known "ubuntu", which the bundled mkpasswd can check; OpenWrt's is empty, never a hash)
+    _ih=$(image_hash "$1") || _ih=
+    [ -z "$_ih" ] || [ "$2" != "$_ih" ] || return 0
+    case $2 in '$5$'*) _m=sha256 ;; '$6$'*) _m=sha512 ;; *) return 1 ;; esac
+    _s=${2#\$?\$}; _s=${_s%%\$*}
+    case $_s in rounds=*|'') return 1 ;; esac
+    [ "$(printf '%s\n' ubuntu | "$UBB" mkpasswd -m "$_m" -S "$_s" -P 0 2>/dev/null)" = "$2" ]
+}
 inspect_target() {  # which systems the existing filesystem holds, and its Ubuntu release: mounted read-only
     HAVE_SYSTEMS=; HAVE_UBUNTU=; HAVE_ACCOUNTS=0
     [ "$existing" = yes ] && [ "$FORMAT" = 0 ] || return 0
     mount_target "$W/mnt" ro || die "$(t 'could not mount the existing Linux filesystem')"
     for _os in ubuntu openwrt openwrt-luci; do [ -d "$W/mnt/$_os" ] && HAVE_SYSTEMS="$HAVE_SYSTEMS $_os"; done
-    if [ -f "$W/mnt/$OS/etc/shadow" ] && [ ! -e "$W/mnt/$OS/etc/.mu300-accounts-from-image" ]; then HAVE_ACCOUNTS=1; fi
+    _u=root; [ "$OS" != ubuntu ] || _u=ubuntu
+    _h=$(sed -n "s/^$_u:\([^:]*\):.*/\1/p" "$W/mnt/$OS/etc/shadow" 2>/dev/null | head -n1) || _h=
+    case $_h in
+        '$'?*) if [ ! -e "$W/mnt/$OS/etc/.mu300-accounts-from-image" ] && ! default_hash "$_u" "$_h"; then
+                   HAVE_ACCOUNTS=1; fi ;;
+    esac
+    _h=
     HAVE_UBUNTU=$(sed -n 's/^VERSION_ID="\(.*\)"/\1/p' "$W/mnt/ubuntu/usr/lib/os-release" 2>/dev/null | head -n1)
     umount_target "$W/mnt" || die "$(t 'could not unmount the Linux filesystem from {1}' "$W/mnt")"
 }
@@ -632,8 +653,8 @@ save_password() {
     replace_file "$PW_FILE" pw_text || die "$(t 'could not write {1}; nothing was installed' "$PW_FILE")"
     pw_show
 }
-# A MU300_PASSWORD or MU300_PASSWORD_RESET line in the trusted conf, and an erasing setting this run used (USED_KEYS), have done their job:
-# each becomes a comment (the file stays root's, mode 600). A key is matched as conf_load reads it (blanks around and
+# A MU300_PASSWORD or MU300_PASSWORD_RESET line in the trusted conf, and an erasing setting this run used
+# (USED_KEYS), have done their job: each becomes a comment (the file stays root's, mode 600). A key is matched as conf_load reads it (blanks around and
 # inside it do not count); a conf inside the zip is never edited.
 conf_drop_used() {
     awk -v d="$_drop " '{ l = $0; sub(/^[ \t]*/, "", l); k = l; sub(/=.*/, "", k); gsub(/[ \t]/, "", k)

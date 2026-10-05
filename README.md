@@ -372,7 +372,8 @@ Only look at what an install would do, with the file on `/sdcard`: `MU300_DRY_RU
 **The password.** It is never empty and never the image's (`ubuntu`/`ubuntu`, OpenWrt's empty root). An update
 keeps the accounts and passwords the system has, as `mu300-update` does: a password is made only for a system that has
 none of its own yet (a first install, a wipe, the second system next to the first), or when
-`/data/adb/mu300-install.conf` asks for one with `MU300_PASSWORD` or `MU300_PASSWORD_RESET=yes`. A new one is written to
+`/data/adb/mu300-install.conf` asks for one with `MU300_PASSWORD` or `MU300_PASSWORD_RESET=yes` (put these there, not
+into a zip's own `mu300/mu300-install.conf`, which is never edited and would reset the password at every update). A new one is written to
 `/data/adb/mu300-linux-password.txt`, which only root reads, and shown in the Magisk output (between quotes) before
 anything is installed, so an install that stops later never leaves a password nobody has seen. Only a trusted
 `MU300_PASSWORD_FILE=sdcard` writes it to `/sdcard/mu300-linux-password.txt` instead, where every app with storage
