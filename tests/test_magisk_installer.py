@@ -670,6 +670,20 @@ class Plan(InstallerCase):
             [line] = [l for l in plan.splitlines() if l.strip().startswith(label)]
             self.assertIn('(default)', line, line)
 
+    def test_plan_names_an_installed_openwrt_luci(self):
+        # the third system (OpenWrt with the control panel) is one the existing filesystem can hold: it is counted
+        # for the space check and named in the plan like the other two
+        self.existing_filesystem(systems=('openwrt-luci', 'ubuntu'))
+        r = self.run_installer(conf='MU300_DRY_RUN=1\nMU300_MODE=update\nMU300_STORAGE=internal\n')
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        [line] = [l for l in r.stdout.splitlines() if 'already there:' in l]
+        self.assertIn('openwrt-luci', line)
+        self.assertIn('ubuntu', line)
+        # and it may be the one that boots
+        r = self.run_installer(conf='MU300_DRY_RUN=1\nMU300_MODE=update\nMU300_STORAGE=internal\nMU300_BOOT_OS=openwrt-luci\n')
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertRegex(r.stdout, r'boots: +openwrt-luci')
+
     def test_example_conf_is_never_written_through_a_link(self):
         victim = self.tmp / 'victim'
         victim.write_text('not yours')

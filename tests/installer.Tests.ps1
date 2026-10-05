@@ -13,7 +13,7 @@ function Check($name, $got, $want) {
 
 # the functions under test, straight from install.ps1
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Top "install.ps1"), [ref]$null, [ref]$null)
-$want = 'LoadLanguage', 'T', 'NormalizeAnswer', 'Gib', 'ChooseStorage', 'StorageDefault', 'InternalOverCard', 'SdState', 'SdKernelOk', 'InstallEnvText'
+$want = 'LoadLanguage', 'T', 'NormalizeAnswer', 'Gib', 'ChooseStorage', 'StorageDefault', 'InternalOverCard', 'SdState', 'SdKernelOk', 'InstallEnvText', 'ChooseOpenWrt'
 $defs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $true)
 foreach ($d in $defs) { . ([scriptblock]::Create($d.Extent.Text)) }
 foreach ($w in 'LoadLanguage', 'T', 'NormalizeAnswer') {
@@ -70,6 +70,31 @@ Check 'invalid answer'     $threw $true
 $threw = $false; try { ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB 'usb' '' | Out-Null } catch { $threw = $true }
 Check 'invalid forced'     $threw $true
 
+# ---- ChooseOpenWrt: plain OpenWrt or with the MU300 control panel (install.sh's choose_systems) --------------------
+Check 'owrt 3 + 2'         ((ChooseOpenWrt @('ubuntu', 'openwrt') '' '2') -join ' ') 'ubuntu openwrt-luci'
+Check 'owrt 2 + 1'         ((ChooseOpenWrt @('openwrt') '' '1') -join ' ') 'openwrt'
+Check 'owrt default'       ((ChooseOpenWrt @('openwrt') '' '') -join ' ') 'openwrt'
+Check 'owrt preset luci'   ((ChooseOpenWrt @('openwrt') 'luci' '') -join ' ') 'openwrt-luci'
+Check 'owrt preset plain'  ((ChooseOpenWrt @('ubuntu', 'openwrt') 'plain' '2') -join ' ') 'ubuntu openwrt'
+Check 'owrt one element'   (@(ChooseOpenWrt @('openwrt') 'luci' '').Count) 1
+$threw = $false; try { ChooseOpenWrt @('openwrt') 'x' '' | Out-Null } catch { $threw = $true }
+Check 'owrt bad preset'    $threw $true
+$threw = $false; try { ChooseOpenWrt @('openwrt') '' '7' | Out-Null } catch { $threw = $true }
+Check 'owrt bad answer'    $threw $true
+# a one-system result unrolls to a plain string, so the call site must wrap it in @() or $OSES[0] is one letter
+$bare = ChooseOpenWrt @('openwrt') 'luci' ''
+Check 'owrt bare result unrolls'  ($bare -is [string]) $true
+$site = [IO.File]::ReadAllText((Join-Path $Top 'install.ps1'))
+Check 'owrt call site wraps in @()'  ($site -match '\$OSES = @\(ChooseOpenWrt ') $true
+foreach ($pair in @(@('', 'openwrt'), @('luci', 'openwrt-luci'))) {
+    $OSES = @(ChooseOpenWrt @('openwrt') $pair[0] '')
+    Check "owrt single [$($pair[1])] first"  $OSES[0] $pair[1]
+    Check "owrt single [$($pair[1])] count"  $OSES.Count 1
+}
+# the boot question accepts the names that were chosen: 'openwrt' is not one of them after the second answer
+$o = ChooseOpenWrt @('ubuntu', 'openwrt') '' '2'
+Check 'boot openwrt-luci ok'  ('openwrt-luci' -in $o) $true
+Check 'boot openwrt refused'  ('openwrt' -in $o) $false
 # a card that holds an installation already is the default: init starts it before anything internal
 Check 'installed card, default'    (ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB '' '' 'yes') 'sd'
 Check 'blank card, default'        (ChooseStorage '/dev/block/mmcblk1p1' 62GB 30GB '' '' 'no') 'internal'

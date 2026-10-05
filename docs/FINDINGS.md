@@ -2153,3 +2153,91 @@ point of view; what came out of it, measured on 2026-10-05:
   used a random `40:45:da:...` on every boot. It now reads LK's `androidboot.wifimac` from `/chosen/bootargs`, as the
   mainline port does: `5c:7d:ae:b4:0b:d0` (the second F50's bootargs) over two 5.4 boots and a 6.18 one; F50 #1's is
   `5c:7d:ae:b4:0b:be`.
+
+## The third system
+
+### 35. kanoqwq's fixes, measured: openwrt-luci on F50 #1 and the U30 Air
+
+The third system (OpenWrt with the MU300 control panel, built from this branch) was installed next to the systems
+already there - F50 #1 on its card (`/openwrt`, `/ubuntu`, now `/openwrt-luci`; kernel 6.18.55, boot image
+v2026.10.08), the U30 Air on its internal region (`/ubuntu`, now `/openwrt-luci`; 7.2.9) - with the vendor files,
+`hotspot.conf` and the password of the system of the same device, and booted with `mu300-os openwrt-luci`. Both
+devices went back to their own system afterwards. The boot images were not replaced: what only a new init does
+(K5/K9 early lease from the initramfs, K6 RNDIS, the USB mode the panel saves, K1's "never a kept copy") is
+covered by the unit tests, not by these boots. The reboots are soft reboots (F50 #1 cannot be power-cycled
+remotely; the U30 Air has a battery), not cold boots.
+
+Two defects showed on the first boot and are fixed:
+
+* `android-vendor-start` (from main, the slot work): `L=$(cat /run/mu300/linux-slot)` under `set -e` ended the
+  script when the boot image does not publish that file, before `modem_control`; procd restarted it every 10 s and
+  the AT channel never answered (8 restarts in 100 s, `no valid answer to the RIL handshake` every 36 s). Any device
+  whose rootfs is newer than its boot image had no modem. Now the slot falls back to the command line.
+* Every check of a dead AT owner printed `mu300-at: line 96: can't open /proc/7668/cmdline` into radio.log
+  (`tr < /proc/$pid/cmdline 2>/dev/null` reports the failed redirection before its own `2>/dev/null` applies).
+  And `mu300-sms` named its lock with `cksum`, which OpenWrt's busybox does not have (`cksum: not found` in the
+  panel's SMS details).
+
+Per boot, from `/run/mu300/boot-timeline` and `radio.log` (seconds after the kernel started):
+
+| | F50 #1 (9 boots) | U30 Air (11 boots) |
+|---|---|---|
+| vendor start -> props (K40, K41: no logdw second) | 0.01 | 0.01 |
+| RIL handshake `AT+SMMSWAP=0` answered (K57) | 24.5-25.0, 9/9 OK | 24.9-25.6, 11/11 OK |
+| radio on (`CFUN: 1`) after one `AT+SFUN=4` | 28.0-28.6 | 28.6-29.3 |
+| registered (K23: within 60 s, "wait modem alive timeout" never) | 30.1-30.7, 0 timeouts | 30.8-31.4, 0 timeouts |
+| sipa-dele loaded by the dial (K45-K47) | 35.3-40.9 | 40.0-41.7 |
+| address on sipa_eth0 | 37.4-43.1 | 42.1-43.9 |
+| radio-warmup done (K20) / its dial waited for it | 31.3-32.7 / yes | 33.5-34.1 / yes |
+| hostapd ENABLED, "AP not up, retrying" (K15) | 9/9, 0 | 11/11, 0 |
+| nr6/nr7 dashboard daemons (K19), early lock hook cleared (K65) | 9/9, 9/9 | 10/10, 10/10 |
+| USB host (macOS) answers ping after the reboot command | 24-27 s, lease 3600 s (preinit, K11) | 24-25 s, lease 3600 s |
+
+A tenth F50 boot hung hard (no USB, back in Android after about 20 minutes, `su -c mu300-linux` brought it back):
+the known 6.18 hang of FINDINGS 31m, counted apart. K23 and K57 passed on soft reboots (F50 #1 9 + 1 hang counted
+apart, U30 Air 11); cold boots not run (F50 #1 cannot be power-cycled remotely, the U30 Air has a battery). On the U30
+Air, ten `ifdown wan; ifup wan` gave the WAN back in
+8.15-8.17 s each, `dmesg | grep -ci "cfi\|sipa_dele.*panic"` 0, one `AT+SFUN=4` in the whole run.
+
+* **K4** (region probe through a loop device): busybox `dd` seeks. The probe at the region offset took 0.01-0.04 s
+  on the F50 and 0.05-0.08 s (with sudo) on the U30 Air: nothing to win, not taken.
+* **K12** (one 100 ms rebind at boot instead of the lease check): macOS got its lease on every boot with both
+  running, but the Windows host was not reachable and no Linux USB host was attached, so the gate (three hosts) did
+  not pass. The `usb-ready` instance went; `--if-no-lease` and the re-enumeration (K10) stay.
+* **K6** (RNDIS in one configuration): not measured, no Windows host; kept (only an explicit RNDIS choice uses it,
+  and mainline kernels have no RNDIS, where the saved choice falls back to NCM).
+* **K25/K26 early lease on a custom LAN**: with `network.lan.ipaddr=192.168.90.1` the Mac was on 192.168.90.200
+  25 s after the reboot command, and on 192.168.77.200 25 s after changing it back.
+* **Relay IPv6 (K30, K35-K37) without NDP relay**: the carrier gives a /64 by RA (2a00:1880:a00a:ee32::/64 on the
+  F50) and fills `+CGCONTRDP`'s IPv6 address with the interface identifier only (`0.0.0.0.0.0.0.0.24.219...`, the
+  prefix zero) and two IPv6 DNS servers (2a00:1880:101:c::1, ::3). The phone on Wi-Fi and the Mac on USB took SLAAC
+  addresses in that /64 from the relayed RA; `ndp-learn` routed it to br-lan at metric 128; no /128 route existed
+  anywhere. A DNS query over IPv6 from the Mac's SLAAC address to 2a00:1880:101:c::1 was forwarded (nft counters
+  1 out, 1 in) and answered. Wider traffic could not be tried: both lines were in the carrier's walled garden (no
+  credit: DNS answered, ICMP and HTTP did not, the same under the device's own Ubuntu). The spoofed-NS test was not
+  run (no tool to craft one on the LAN side); ndp-learn takes no LAN input at all. `uci show dhcp` has no
+  `ndp`/`ndproxy` option. A changed `network.wan.ipv6` reaches `mu300-ndp` only at the next boot, as its header says.
+* **SMS (K58, K69)**: sending failed on both lines whatever `AT+CAVIMS` was (`+CMS ERROR: 28` on the U30 Air,
+  `313` on the F50, the same with 0 and 1): the lines have no credit, so `AT+CAVIMS=1` is kept (no difference
+  measured) and receiving was not tried. `AT+CMGL=4` marks messages read on this modem: on F50 #1's SIM the first
+  listing showed 35 as REC UNREAD, the second 35 as REC READ. The pool never deletes from the SIM.
+* **Update keeps the user's settings (I3)**: on openwrt-luci with the language, theme, `pdptype` and `ipv6` changed,
+  mu300-update's `apply_one` with a newer image and a reboot kept all four, and `dhcp` had no NDP option. The device
+  check covered those four (91-mu300-luci). The update now keeps the user's network settings too: 90-mu300 is split
+  the same way (first-install defaults behind `system.mu300.defaults`; an install from before it is told by wan
+  proto `mu300cell`), so the LAN address and mask, `ip6assign`, the APN, hostname, time zone and br-lan's members
+  stay as the user set them; flow offloading too, except once on the first update of an install from before the
+  marker, which switches it on (`mu300-ttl` turns it off again at boot while a TTL is set). Checked on the U30 Air:
+  its openwrt-luci from before the marker, hostname changed to `u30test`, updated by `apply_one` with the new image:
+  after the reboot the hostname, LAN address and `ip6assign` 60 were kept, the marker was set, WAN and the Mac's
+  lease came up. Open: the pinned USB host entry keeps its address when the LAN moves to another subnet (a later
+  fix should re-derive it from the LAN).
+* **TTL and the flowtable (K28, R23)**: `mu300-ttl set 64` turned flow offloading off and the sipa_eth0 flowtable
+  went (1 -> 0); `off` brought both back.
+* **The panel**: every page (Status, Network locks, SMS, AT terminal, Adapter settings, Device management) in a
+  browser set to English, German, Turkish and Chinese on both devices: no Chinese in English, German or Turkish, no
+  string of the catalogs left in English in Turkish or Chinese, German shows English. Backend refusals (a bad
+  number, an over-long SMS) have Turkish and Chinese entries; a radio switch during a dial answers "busy".
+* **LEDs (K38, K39, K68)**: not ported here. The F50's lamp states were measured with someone watching and are
+  implemented by the f50-leds-fixes work (FINDINGS 34); the fork's boot chase, lamp switches and LED page
+  follow that branch.

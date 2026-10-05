@@ -45,8 +45,8 @@ LEDs and the default address follow. The U30 **Pro** is a different chip (UMS963
 
 ## What you get
 
-* **A real Linux system**, not an app or a container: Ubuntu 24.04 LTS with systemd and `apt`, or OpenWrt with its
-  LuCI web interface.
+* **A real Linux system**, not an app or a container: Ubuntu 24.04 LTS with systemd and `apt`, OpenWrt with its
+  LuCI web interface, or OpenWrt with the MU300 control panel (below).
 * **Internet over 5G/LTE**, shared with everything connected to the device.
 * **A Wi-Fi hotspot** (5 GHz or 2.4 GHz) and **USB networking**: plug it into a computer and it shows up as a network adapter.
 * **SSH access** at `192.168.77.1` (U30 Air: `192.168.78.1`), plus a USB serial console.
@@ -191,6 +191,34 @@ address is `192.168.78.1` instead.
 The Wi-Fi network the device broadcasts is its hotspot; unless you chose otherwise it uses the name and password
 copied from Android.
 
+### OpenWrt with the MU300 control panel
+
+The third system, `openwrt-luci`, is OpenWrt 25.12 with a LuCI application written for these devices, in English,
+Turkish and Chinese. It is an option next to plain OpenWrt, not a replacement: the installer asks "Which OpenWrt?"
+whenever OpenWrt is chosen (`MU300_OPENWRT=plain|luci` answers without asking), and the system lives in
+`/openwrt-luci` on the Linux disk. Its release asset is `mu300-openwrt-luci-rootfs.tar.gz`; switch to it with
+`sudo mu300-os openwrt-luci`. The panel's pages:
+
+* **Status dashboard:** live radio readings (signal, bands, cells, temperatures), mobile data state.
+* **Cellular > Network locks:** network mode, band, cell and EN-DC locks that persist across reboots and are replayed at boot, before
+  the radio comes on where the modem allows it.
+* **Cellular > SMS:** read, send and delete messages. A pool daemon syncs the SIM every 30 s with `AT+CMGL`, which marks
+  unread messages on the SIM as read (measured, FINDINGS 35; the panel keeps its own unread state). Do not run
+  `sms delete read` on this system.
+* **Cellular > AT terminal:** guarded AT commands over the same channel daemons the system uses.
+* **Cellular > Device management:** USB role (device or host), the USB network mode (NCM, ECM or RNDIS, applied at the next boot) and
+  adapters in host mode that can join the LAN bridge.
+* **Cellular > Adapter settings:** how the panel reaches the modem (AT backend, serial port, custom AT adapter).
+
+IPv6 on this system is relayed from the carrier (router advertisements and NAT66) instead of the prefix extension
+plain OpenWrt uses. Aurora is the default theme, Bootstrap stays installed. The timings of this system are measured
+in the device phase and are not listed here.
+
+The panel is the work of kanoqwq ([`kanoqwq/mu300-linux`](https://github.com/kanoqwq/mu300-linux), branch
+`clean-tf-7.2`); this repository ports it, with translations rewritten as standard LuCI catalogs and the shared
+fixes applied to all three systems. The theme is [Aurora](https://github.com/eamonxg/luci-theme-aurora) by
+eamonxg. The app's own notes are in [`openwrt/luci-app-mu300/README.md`](openwrt/luci-app-mu300/README.md).
+
 ## Everyday use
 
 `sudo mu300-toolkit` opens a menu for everything below. The direct commands:
@@ -206,7 +234,7 @@ copied from Android.
 | Connect the device to someone else's Wi-Fi | `sudo mu300-toolkit` → Network → Wi-Fi → "Join a network", or `sudo wifi-client scan` then `sudo wifi-client connect "NAME"` (it asks for the password); see [Wi-Fi client](#wi-fi-client) |
 | Update to the newest release | `sudo mu300-update check` then `sudo mu300-update apply`. The device looks for a new release at boot and every 6 hours and says so at login and in `mu300-toolkit`; it never installs one by itself |
 | Fixed TTL for mobile data (so the operator cannot tell hotspot traffic from the device's own) | `sudo mu300-ttl set 64` (`sudo mu300-ttl off` goes back to the default), or `mu300-toolkit` -> Network -> TTL |
-| Switch between OpenWrt and Ubuntu | `sudo mu300-os openwrt` / `sudo mu300-os ubuntu` |
+| Switch between OpenWrt and Ubuntu | `sudo mu300-os openwrt` / `sudo mu300-os ubuntu` (`openwrt-luci` for the one with the control panel) |
 | Failed boots in a row before it falls back to Android (1-6, default 5) | `sudo mu300-next-boot attempts N` |
 | Go back to Android | `sudo mu300-next-boot android`, then `sudo reboot` |
 | Return to Linux from Android | `su -c mu300-linux` on the device (see below), or `boot/android-boot-linux.sh boot-linux-slotb.img` from a computer |
@@ -581,7 +609,7 @@ and would overwrite the device's storage. A normal `apk upgrade` is fine, except
 | `kernel/` | kernel build environment, config, patches |
 | `boot/` | initramfs `init`, boot image builder, slot handling |
 | `rootfs/` | Ubuntu image: `Dockerfile`, `assemble.sh`, services and scripts in `overlay/` |
-| `openwrt/` | OpenWrt and ImmortalWrt image build |
+| `openwrt/` | OpenWrt and ImmortalWrt image build; `luci-overlay/` and `luci-app-mu300/` make the `openwrt-luci` system |
 | `arch/` | Arch Linux ARM image build |
 | `android-vendor/` | scripts that copy the needed Android files from *your* device |
 | `tools/` | helper programs, release tooling, backup, SSH/serial/log helpers |
@@ -595,6 +623,8 @@ The kernel source used here is mirrored at
 * Wi-Fi, Bluetooth and GPU drivers: realme C51/C53 AndroidT kernel release — GPL-2.0; the patches in
   `kernel/patches` are GPL-2.0.
 * Scripts, tools and documentation in this repository: MIT (see `LICENSE`).
+* `openwrt/luci-app-mu300`: the control panel by kanoqwq (`kanoqwq/mu300-linux`, `clean-tf-7.2`), changed here; the
+  Aurora theme (`luci-theme-aurora`) by eamonxg is downloaded at build time, pinned and checked by hash.
 * Stock firmware, Android vendor components and bootloaders belong to their owners and are not distributed here,
   with one exception: [`stock/`](stock/) holds the stock `trustos` (TEE) image for firmware `ZYV1.0.0B09`, as a
   last-resort repair for devices whose own TEE is damaged; all rights to it remain with ZTE/Unisoc. Read
