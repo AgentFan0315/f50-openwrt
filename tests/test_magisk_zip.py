@@ -48,7 +48,8 @@ class Customize(ShellTest):
             r, mod = self.run_customize(shell, 'echo installing; exit 0')
             self.assertIn('installing', r.stdout)
             self.assertTrue((mod / 'switch.sh').exists() and (mod / 'module.prop').exists())
-            self.assertNotIn('e', r.stdout.split('after opts=')[1].split()[0])   # Magisk's options untouched
+            opts = r.stdout.split('after opts=')[1].split('\n')[0]   # dash prints it empty
+            self.assertFalse(set('eu') & set(opts), opts)             # Magisk's options untouched
 
     def test_failure_and_dry_run_abort(self):
         for shell in self.each_shell():
