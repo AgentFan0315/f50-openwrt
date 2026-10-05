@@ -1,12 +1,12 @@
 #!/system/bin/sh
-# Device side of install.sh (runs as root on Android). Settings come from /data/local/tmp/mu300-install.env:
+# Device side of install.sh (runs as root on Android). Settings come from $T/mu300-install.env (T below):
 #   OFF SIZE           free eMMC region (bytes) after the last GPT partition, as strings
 #   OFF_S SIZE_S       the same in 512-byte sectors (Android's mksh has 32-bit arithmetic: never compute with bytes)
 #   SD_MODE=0|1 SD_DEV with SD_MODE=1 the filesystem (label mu300sd) is the SD card block device SD_DEV instead of
 #                      that region; OFF/SIZE are then not used
 #   INTERNAL_EXISTS=0|1  with SD_MODE=1: an internal mu300root exists at OFF/SIZE and gets the root-on-sd marker
 #   FORMAT=0|1         create the ext4 filesystem (mu300root in the region, mu300sd on the card)
-#   OSES="ubuntu openwrt"  systems to (re)install from /data/local/tmp/mu300-<os>.tar.gz
+#   OSES="ubuntu openwrt"  systems to (re)install from $T/mu300-<os>.tar.gz
 #                      (plus mu300-vendor-<os>.tar.gz with the device's own vendor files for prebuilt images)
 #   WIPE_LEGACY=0|1    remove a first-generation Ubuntu that lives directly in the filesystem root
 #   UPDATE=0|1         keep the settings and user data of the systems being reinstalled
@@ -16,9 +16,11 @@
 #   PWHASH             SHA-512 crypt hash for the "ubuntu" (Ubuntu) and "root" (OpenWrt) accounts
 #   IMPORT_HOTSPOT=0|1 copy Android's hotspot SSID/passphrase into each system
 #   KERNEL=5.4|6.18|7.2  the kernel in the new boot image; mu300-update keeps installing that one (boot/kernel)
-# Extras pushed as /data/local/tmp/mu300-extra-<name>.tar.gz go to extra/<name> on the Linux partition.
+# Extras pushed as $T/mu300-extra-<name>.tar.gz (the work directory, see below) go to extra/<name> on the Linux partition.
 set -e
-T=/data/local/tmp
+# install.sh pushes everything to /data/local/tmp. The Magisk installer runs this as root from a directory only root
+# can write (MU300_DEVICE_WORK): files in /data/local/tmp can be replaced by the shell user after they were checked.
+T=${MU300_DEVICE_WORK:-/data/local/tmp}
 . $T/mu300-install.env
 M=$T/mu300root
 say() { echo "[device] $*"; }

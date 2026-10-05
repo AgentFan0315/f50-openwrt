@@ -204,7 +204,7 @@ copied from Android.
 | Set the APN | Ubuntu: `/etc/mu300/mobile-data.conf` (`MU300_APN`, `MU300_PDP_TYPE`). OpenWrt: LuCI → Network → Interfaces → wan, or `uci set network.wan.apn='…'; uci commit network; ifup wan`. Leave it empty to keep the context the SIM defines, which is what most carriers expect |
 | Change the Wi-Fi name or password | edit `/etc/mu300/hotspot.conf`, then `sudo systemctl restart mu300-hotspot` |
 | Connect the device to someone else's Wi-Fi | `sudo mu300-toolkit` → Network → Wi-Fi → "Join a network", or `sudo wifi-client scan` then `sudo wifi-client connect "NAME" "PASSWORD"` |
-| Update to the newest release | `sudo mu300-update check` then `sudo mu300-update apply` |
+| Update to the newest release | `sudo mu300-update check` then `sudo mu300-update apply`. The device looks for a new release at boot and every 6 hours and says so at login and in `mu300-toolkit`; it never installs one by itself |
 | Fixed TTL for mobile data (so the operator cannot tell hotspot traffic from the device's own) | `sudo mu300-ttl set 64` (`sudo mu300-ttl off` goes back to the default), or `mu300-toolkit` -> Network -> TTL |
 | Switch between OpenWrt and Ubuntu | `sudo mu300-os openwrt` / `sudo mu300-os ubuntu` |
 | Failed boots in a row before it falls back to Android (1-6, default 5) | `sudo mu300-next-boot attempts N` |
@@ -213,9 +213,143 @@ copied from Android.
 | Send all traffic through a VPN | see below (`sudo mu300-extra install vpn` first) |
 | Add or remove optional parts (the VPN engines) | `mu300-extra list`, `sudo mu300-extra install vpn`, `sudo mu300-extra remove vpn` |
 
+### Installing from Android with a Magisk zip
+
+If the device already runs a rooted Android with Magisk 26 or newer, Linux can be installed from the device itself,
+without a computer: from the Magisk app (reached through scrcpy, a web panel or a phone running adb) or from
+`adb shell`. The zips are built from the files of a release by the "Magisk installers" workflow
+(`.github/workflows/magisk.yml`), which attaches them to that release together with `SHA256SUMS-magisk`. They are
+only there once the workflow has run for the release: look at the release's assets. Building them yourself:
+`tools/make-magisk-zips.sh RELEASE_DIR OUT_DIR`.
+
+**1. Take one zip.** One per system and kernel. The same zip works on the F50 and on the U30 Air, and installs to
+the internal storage or to an SD card: the installer recognises the device and finds the place.
+
+| zip | system | kernel | size |
+|---|---|---|---|
+| `mu300-magisk-<tag>-openwrt-k5.4.zip` | OpenWrt | 5.4 (vendor) | 89.7 MB |
+| `mu300-magisk-<tag>-openwrt-k6.18.zip` | OpenWrt | 6.18 LTS | 72.1 MB |
+| `mu300-magisk-<tag>-openwrt-k7.2.zip` | OpenWrt | 7.2 | 72.4 MB |
+| `mu300-magisk-<tag>-ubuntu-24.04-k5.4.zip` | Ubuntu 24.04 | 5.4 | 165.7 MB |
+| `mu300-magisk-<tag>-ubuntu-24.04-k6.18.zip` | Ubuntu 24.04 | 6.18 LTS | 148.2 MB |
+| `mu300-magisk-<tag>-ubuntu-24.04-k7.2.zip` | Ubuntu 24.04 | 7.2 | 148.4 MB |
+| `mu300-magisk-<tag>-ubuntu-26.04-k6.18.zip` | Ubuntu 26.04 | 6.18 LTS | 160.5 MB |
+| `mu300-magisk-<tag>-ubuntu-26.04-k7.2.zip` | Ubuntu 26.04 | 7.2 | 160.7 MB |
+
+The sizes are those of the v2026.10.08 build. There is no Ubuntu 26.04 zip with kernel 5.4: its programs need system
+calls that kernel does not have, the same rule as for `install.sh`. Check a download with `SHA256SUMS-magisk`.
+
+**2. Install it.** Put the zip on the device and open it in the Magisk app (Modules, Install from storage), or run
+`su -c 'magisk --install-module /sdcard/Download/<zip>'`. Not from recovery.
+
+**3. Read the output.** It shows the device it found, where Linux goes, what it will write, and the password it
+generated. The password is also in `/data/adb/mu300-linux-password.txt` (mode 600; read it with
+`su -c cat /data/adb/mu300-linux-password.txt`, and delete the file after the first login).
+
+**4. Reboot.** Linux starts. If it does not, the device returns to Android by itself.
+
+**Both systems: two zips.** Install the OpenWrt zip and the Ubuntu zip one after the other, in either order. The
+second one adds its system next to the first and becomes the one that boots; `mu300-os openwrt` and
+`mu300-os ubuntu` switch. Ubuntu 26.04 needs kernel 6.18 or 7.2, so with it installed a zip with kernel 5.4 refuses.
+
+After a successful install the zip stays as the Magisk module "MU300 Linux" (the switch module of
+[android/magisk/README.md](android/magisk/README.md), same id): its Action button and `su -c mu300-linux` start
+Linux from Android later.
+
+**What is written.** Linux goes to its own place: a free region of the internal storage behind the partitions, or an
+SD card (a card that already holds a Linux installation of this project is used first, as the device does when it
+boots). Beyond that:
+
+* the boot partition of the slot Android is **not** on (`boot_b` when Android runs from slot a, `boot_a` when it runs
+  from slot b), checked after writing;
+* 32 bytes of `misc`, written last, only when everything before succeeded.
+
+Android's own boot partition, `vbmeta`, the partition table and `userdata` are never written. If the install stops
+before the last step, `misc` is as it was and Android boots. If `misc` itself does not read back right after the last
+step, the installer writes back the block it held before and says whether that worked.
+
+**Back to Android.** From Linux: `sudo mu300-next-boot android`, then `sudo reboot`. Without doing anything, the device
+falls back to Android after 5 failed boots in a row (1-6, `MU300_BOOT_ATTEMPTS` below, `mu300-next-boot attempts N`
+later) and when Linux does not come up at all.
+
+**Not offered here.** Shrinking `userdata` to make room (the 32 GB variant) rewrites the partition table and erases
+Android's data. It stays with the computer installer (`./install.sh`), where a backup step and a typed `ERASE` come
+first. When there is not enough room inside, the installer says so and names what this device has: the SD card, a
+bigger card, or the computer installer.
+
+#### Choosing something else: `mu300-install.conf`
+
+Magisk's install screen cannot ask questions, so the installer decides from what is on the device and only a
+settings file changes that. The file is `KEY=VALUE` lines (`#` for comments, quotes optional). It is read, never run;
+a key that is not in the table is reported and ignored, and a value that is not one of those listed stops the
+installer before anything is written. Every run writes `/sdcard/mu300-install.conf.example` with every key, its
+meaning (on the comment line above it) and the value that run used; copy it to `mu300-install.conf`, remove the `#`
+in front of the keys you want, and install the zip again. `MU300_DRY_RUN=1` prints the plan and writes nothing; the zip is then not installed as a module.
+
+There are two places for the file, because any app with storage access can write `/sdcard`:
+
+* `/sdcard/mu300-install.conf` (or `/sdcard/Download/mu300-install.conf`) may choose only what destroys nothing and
+  reveals nothing.
+* `/data/adb/mu300-install.conf` counts for everything. Only root can create files there, and the installer uses it
+  only when root owns it and neither group nor others can write it. A `mu300-install.conf` inside the zip's `mu300/`
+  folder counts the same (it is as trusted as the scripts next to it).
+
+A key of the second kind found in the `/sdcard` file is reported and ignored, and the installer prints the command
+that turns that file into one only root can change:
+
+```sh
+su -c 'cp /sdcard/mu300-install.conf /data/adb/mu300-install.conf && chmod 600 /data/adb/mu300-install.conf'
+```
+
+Where both files name a key, the one from `/data/adb` wins, and the plan the installer prints says which file each
+value came from. A permission to erase counts only when the choice of storage it applies to comes from `/data/adb`
+too: erasing an SD card needs `MU300_STORAGE=sd` and `MU300_SD_ERASE=yes` both there (or a card that already holds
+`mu300sd`, with no `MU300_STORAGE` set), and overwriting internal space needs `MU300_REGION_OVERWRITE=yes` with
+`MU300_STORAGE=internal` there, or no `MU300_STORAGE`.
+
+A setting that erases counts for one install: once a successful install has used `MU300_MODE=wipe`,
+`MU300_SD_ERASE=yes` or `MU300_REGION_OVERWRITE=yes` from `/data/adb/mu300-install.conf`, the installer turns that line
+into a comment (as it does with `MU300_PASSWORD`) and says so. Otherwise the next zip - the second of two, or an
+update - would wipe or erase again. For another erase, put the line back.
+
+| key | values | from | default |
+|---|---|---|---|
+| `MU300_STORAGE` | `internal`, `sd` | either | Where an installation already is (the card first); else internal when the free region is big enough; else the install is refused with the reason |
+| `MU300_SD_ERASE` | `yes` | `/data/adb` only | Not set: an SD card is never formatted, not a new one and not one holding an installation with `MU300_MODE=wipe` |
+| `MU300_REGION_OVERWRITE` | `yes` | `/data/adb` only | Not set: an internal region whose free space holds data is not used |
+| `MU300_MODE` | `update`, `wipe` | `update` either, `wipe` `/data/adb` only | `update` when a filesystem is there already (settings and data are kept) |
+| `MU300_BOOT_OS` | `ubuntu`, `openwrt` | either | The system of this zip |
+| `MU300_BOOT` | `linux`, `android` | either | `linux`: Linux is the default boot, Android after failed boots. `android`: Android stays the default and Linux starts on demand |
+| `MU300_BOOT_ATTEMPTS` | `1` to `6` | either | `5` |
+| `MU300_HOTSPOT` | `yes`, `no` | either | `yes`: Android's hotspot name and password are copied |
+| `MU300_GPU` | `yes`, `no` | either | `yes` (skipped with a message when this device lacks a file of the GPU set) |
+| `MU300_PASSWORD` | 6 or more characters | `/data/adb` only | Generated: 12 characters from `/dev/urandom` without look-alikes |
+| `MU300_PASSWORD_FILE` | `sdcard` | `/data/adb` only | Not set: the password file is `/data/adb/mu300-linux-password.txt` |
+| `MU300_DEVICE` | `f50`, `u30air` | `/data/adb` only | Detected; needed only for a model name the installer does not know |
+| `MU300_LANG` | `en`, `tr`, `zh` | either | The language of the Android locale |
+| `MU300_DRY_RUN` | `1` | either | Not set |
+
+Examples. Install to the card, formatting it (everything on it is erased), with a password of your own, from
+`adb shell` as root:
+
+```sh
+su -c 'printf "MU300_STORAGE=sd\nMU300_SD_ERASE=yes\nMU300_PASSWORD=choose-one-here\n" > /data/adb/mu300-install.conf'
+su -c 'chmod 600 /data/adb/mu300-install.conf'
+```
+
+Only look at what an install would do, with the file on `/sdcard`: `MU300_DRY_RUN=1` on a line of its own.
+
+**The password.** It is never empty and never the image's (`ubuntu`/`ubuntu`, OpenWrt's empty root). It is written to
+`/data/adb/mu300-linux-password.txt`, which only root reads, and shown in the Magisk output (between quotes) before
+anything is installed, so an install that stops later never leaves a password nobody has seen. Only a trusted
+`MU300_PASSWORD_FILE=sdcard` writes it to `/sdcard/mu300-linux-password.txt` instead, where every app with storage
+access can read it. A `MU300_PASSWORD` from `/data/adb/mu300-install.conf` is replaced by a comment in that file after
+a successful install.
+
 ### Starting Linux from Android without a computer
 
-`android/magisk/build.sh` builds a small Magisk module. Once it is installed, the Magisk app gets an **Action**
+`android/magisk/build.sh` builds a small Magisk module for a device that already has Linux (installed from a computer;
+the zips above are this module plus the installer). Once it is installed, the Magisk app gets an **Action**
 button that reboots the device into Linux, and `su -c mu300-linux` does the same from a terminal
 (`su -c 'mu300-linux status'` just shows which system is on which slot). It writes only the same 32 bytes of
 `misc` that the installer does. See [android/magisk/README.md](android/magisk/README.md).
