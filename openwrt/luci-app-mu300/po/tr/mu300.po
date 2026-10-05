@@ -93,6 +93,204 @@ msgstr "Bilinmeyen numara"
 msgid "Select"
 msgstr "Seç"
 
+msgid "Basic"
+msgstr "Temel"
+
+msgid "Registration/signal"
+msgstr "Kayıt/sinyal"
+
+msgid "Bearer"
+msgstr "Taşıyıcı"
+
+msgid "Engineering mode"
+msgstr "Mühendislik modu"
+
+msgid "AT command (↑↓ history, Enter to send)"
+msgstr "AT komutu (↑↓ geçmiş, göndermek için Enter)"
+
+msgid "Send"
+msgstr "Gönder"
+
+msgid "Clear screen"
+msgstr "Ekranı temizle"
+
+msgid "Ready."
+msgstr "Hazır."
+
+msgid "Session history (click to reuse)"
+msgstr "Oturum geçmişi (yeniden kullanmak için tıklayın)"
+
+msgid "(no output)"
+msgstr "(çıktı yok)"
+
+msgid "Error: %s (the AT channel is busy; the command was not sent)"
+msgstr "Hata: %s (AT kanalı meşgul; komut gönderilmedi)"
+
+msgid "Error: %s"
+msgstr "Hata: %s"
+
+msgid "Failed"
+msgstr "Başarısız"
+
+msgid "Request failed"
+msgstr "İstek başarısız"
+
+msgid "(empty)"
+msgstr "(boş)"
+
+msgid "USB role"
+msgstr "USB rolü"
+
+msgid "Current role"
+msgstr "Geçerli rol"
+
+msgid "Switch USB role"
+msgstr "USB rolünü değiştir"
+
+msgid "Device mode"
+msgstr "Cihaz modu"
+
+msgid "Host mode"
+msgstr "Ana makine modu"
+
+msgid "Enable host mode at boot"
+msgstr "Açılışta ana makine modunu etkinleştir"
+
+msgid "Apply role"
+msgstr "Rolü uygula"
+
+msgid "Host mode disconnects USB networking and serial on this port. F50 has no battery; management may be lost and a USB adapter usually needs a powered hub."
+msgstr "Ana makine modu bu bağlantı noktasındaki USB ağını ve seri bağlantıyı keser. F50 bataryasızdır; yönetim bağlantısı kaybolabilir ve USB bağdaştırıcısı genellikle harici güçlü bir hub gerektirir."
+
+msgid "USB network mode"
+msgstr "USB ağ modu"
+
+msgid "Network protocol"
+msgstr "Ağ protokolü"
+
+msgid "Apply duration"
+msgstr "Uygulama süresi"
+
+msgid "Next reboot only"
+msgstr "Yalnızca sonraki yeniden başlatma"
+
+msgid "Permanent"
+msgstr "Kalıcı"
+
+msgid "Enable selected protocol"
+msgstr "Seçilen protokolü etkinleştir"
+
+msgid "Save; apply after reboot"
+msgstr "Kaydet; yeniden başlatınca uygula"
+
+msgid "NCM is the default. Windows does not natively support ECM; RNDIS changes enumeration. With Enable selected protocol off, only your choice is saved. Next reboot only applies once, then returns to NCM."
+msgstr "NCM varsayılandır. Windows ECM’yi yerel olarak desteklemez; RNDIS aygıt tanımayı değiştirir. Seçilen protokolü etkinleştir kapalıysa yalnızca seçim kaydedilir. Yalnızca sonraki yeniden başlatma bir kez uygulanır, ardından NCM’ye dönülür."
+
+msgid "USB adapters"
+msgstr "USB bağdaştırıcıları"
+
+msgid "Refresh"
+msgstr "Yenile"
+
+msgid "Available only in host mode. Refresh brings discovered USB adapters up; adding to LAN saves the bridge and reloads networking."
+msgstr "Yalnızca ana makine modunda kullanılabilir. Yenileme bulunan USB bağdaştırıcılarını açar; LAN’a ekleme köprüyü kaydeder ve ağı yeniden yükler."
+
+msgid "Unavailable"
+msgstr "Kullanılamıyor"
+
+msgid "USB network mode is unavailable in host mode; host auto-start also disables USB network auto-start."
+msgstr "Ana makine modunda USB ağ modu kullanılamaz; ana makine otomatik başlatma USB ağının otomatik başlatmasını da kapatır."
+
+msgid "Host mode immediately disconnects USB management. F50 has no battery and peripherals may need external power; make sure another management path exists."
+msgstr "Ana makine modu USB yönetimini hemen keser. F50 bataryasızdır ve çevre birimleri harici güç gerektirebilir; başka bir yönetim yolu olduğundan emin olun."
+
+msgid "USB networking and serial will re-enumerate in device mode."
+msgstr "Cihaz modunda USB ağı ve seri bağlantı yeniden tanınır."
+
+msgid "Switch USB role?"
+msgstr "USB rolü değiştirilsin mi?"
+
+msgid "Apply"
+msgstr "Uygula"
+
+msgid "Switching USB role…"
+msgstr "USB rolü değiştiriliyor…"
+
+msgid "Switch failed: %s"
+msgstr "Değiştirme başarısız: %s"
+
+msgid "Unknown error"
+msgstr "Bilinmeyen hata"
+
+msgid "Management connection lost; reconnect to confirm the USB role."
+msgstr "Yönetim bağlantısı kesildi; USB rolünü doğrulamak için yeniden bağlanın."
+
+msgid "Switch request accepted; the USB connection may briefly disconnect."
+msgstr "Geçiş isteği alındı; USB bağlantısı kısa süreli kesilebilir."
+
+msgid "USB role applied"
+msgstr "USB rolü uygulandı"
+
+msgid "Save USB network mode?"
+msgstr "USB ağ modu kaydedilsin mi?"
+
+msgid "The network mode applies on the next reboot; USB management may need to reconnect."
+msgstr "Ağ modu sonraki yeniden başlatmada uygulanır; USB yönetimi yeniden bağlanabilir."
+
+msgid "Save the selection only; with the selected protocol disabled, the next boot still uses default NCM."
+msgstr "Yalnızca seçim kaydedilir; seçilen protokol etkin değilse sonraki açılışta varsayılan NCM kullanılır."
+
+msgid "Save"
+msgstr "Kaydet"
+
+msgid "Saving USB network settings…"
+msgstr "USB ağ ayarları kaydediliyor…"
+
+msgid "Settings saved"
+msgstr "Ayarlar kaydedildi"
+
+msgid "Save failed: %s"
+msgstr "Kaydetme başarısız: %s"
+
+msgid "Unable to confirm the role yet; reconnect and refresh the page."
+msgstr "Rol henüz doğrulanamadı; yeniden bağlanıp sayfayı yenileyin."
+
+msgid "Switch to host mode to see USB adapters."
+msgstr "USB bağdaştırıcılarını görmek için ana makine moduna geçin."
+
+msgid "Scanning USB adapters…"
+msgstr "USB bağdaştırıcıları taranıyor…"
+
+msgid "No USB adapters found."
+msgstr "USB bağdaştırıcısı bulunamadı."
+
+msgid "Link connected"
+msgstr "Bağlantı kuruldu"
+
+msgid "No link; enable attempted"
+msgstr "Bağlantı yok; etkinleştirme denendi"
+
+msgid "Added to LAN"
+msgstr "LAN’a eklendi"
+
+msgid "Add to LAN"
+msgstr "LAN’a ekle"
+
+msgid "Add USB adapter to LAN?"
+msgstr "USB bağdaştırıcısı LAN’a eklensin mi?"
+
+msgid "This saves the bridge configuration and reloads networking; existing connections may briefly drop."
+msgstr "Bu işlem köprü yapılandırmasını kaydedip ağı yeniden yükler; mevcut bağlantılar kısa süreli kesilebilir."
+
+msgid "Add"
+msgstr "Ekle"
+
+msgid "Adding USB adapter…"
+msgstr "USB bağdaştırıcısı ekleniyor…"
+
+msgid "Add failed: %s"
+msgstr "Ekleme başarısız: %s"
+
 msgid "Modulation DL/UL"
 msgstr "Modülasyon İndirme/Yükleme"
 
@@ -239,12 +437,6 @@ msgstr "Tamamlandı: %s"
 
 msgid "Failed: %s"
 msgstr "Başarısız: %s"
-
-msgid "Unknown error"
-msgstr "Bilinmeyen hata"
-
-msgid "Request failed"
-msgstr "İstek başarısız"
 
 msgid "Disconnecting data…"
 msgstr "Veri bağlantısı kesiliyor…"
@@ -453,9 +645,6 @@ msgstr "Uygulama radyo yığınını (SFUN) yeniden başlatır ve hücresel bağ
 msgid "Apply “%s”?"
 msgstr "“%s” uygulansın mı?"
 
-msgid "Apply"
-msgstr "Uygula"
-
 msgid "Applying %s in the background…"
 msgstr "%s arka planda uygulanıyor…"
 
@@ -578,3 +767,159 @@ msgstr "Otomatik (%d destekleniyor)"
 
 msgid "%d locked: %s"
 msgstr "%d kilitli: %s"
+
+msgid "Configure how this plugin connects to the current Unisoc OpenWrt platform. Changes do not require editing the dashboard, AT, locks or SMS pages."
+msgstr "Bu eklentinin mevcut Unisoc OpenWrt platformuna nasıl bağlandığını yapılandırın. Değişiklikler panel, AT, kilit veya SMS sayfalarını düzenlemeyi gerektirmez."
+
+msgid "Platform adapter"
+msgstr "Platform bağdaştırıcısı"
+
+msgid "AT backend"
+msgstr "AT arka ucu"
+
+msgid "Auto-detect"
+msgstr "Otomatik algıla"
+
+msgid "atinout + serial port"
+msgstr "atinout + seri port"
+
+msgid "Custom adapter"
+msgstr "Özel bağdaştırıcı"
+
+msgid "AT serial port"
+msgstr "AT seri portu"
+
+msgid "Custom AT adapter"
+msgstr "Özel AT bağdaştırıcısı"
+
+msgid "The executable receives a timeout in seconds and the complete AT command, in that order. It must share the serial lock with the platform dialer."
+msgstr "Yürütülebilir dosya sırayla saniye cinsinden zaman aşımını ve tam AT komutunu alır. Seri port kilidini platform arama programıyla paylaşmalıdır."
+
+msgid "SMS adapter"
+msgstr "SMS bağdaştırıcısı"
+
+msgid "Implement the list, show, send, delete and sync subcommands; leave blank to find mu300-sms automatically."
+msgstr "list, show, send, delete ve sync alt komutlarını uygulayın; mu300-sms otomatik bulunsun diye boş bırakın."
+
+msgid "SMS pool directory"
+msgstr "SMS havuzu dizini"
+
+msgid "Cellular logical interface"
+msgstr "Hücresel mantıksal arabirim"
+
+msgid "Cellular IPv6 interface"
+msgstr "Hücresel IPv6 arabirimi"
+
+msgid "Cellular network device"
+msgstr "Hücresel ağ aygıtı"
+
+msgid "Leave blank to detect from netifd"
+msgstr "netifd’den otomatik algılamak için boş bırakın"
+
+msgid "LAN bridge"
+msgstr "LAN köprüsü"
+
+msgid "Wi-Fi device"
+msgstr "Wi-Fi aygıtı"
+
+msgid "USB device"
+msgstr "USB aygıtı"
+
+msgid "Maximum wait for AT readiness (seconds)"
+msgstr "AT hazır olma üst bekleme süresi (saniye)"
+
+msgid "Home dashboard refresh interval (seconds)"
+msgstr "Ana pano yenileme aralığı (saniye)"
+
+msgid "Controls only the home dashboard refresh rate; 0.5–60 seconds. Reopen Home after saving to apply."
+msgstr "Yalnızca ana panonun yenileme hızını kontrol eder; 0,5–60 saniye. Kaydettikten sonra uygulamak için Ana Sayfa’yı yeniden açın."
+
+msgid "Persistent state directory"
+msgstr "Kalıcı durum dizini"
+
+msgid "Recipient: number, e.g. 10086 or +86..."
+msgstr "Alıcı: numara, ör. 10086 veya +86..."
+
+msgid "Sync from SIM"
+msgstr "SIM’den eşitle"
+
+msgid "Clear local pool"
+msgstr "Yerel havuzu temizle"
+
+msgid "Loading…"
+msgstr "Yükleniyor…"
+
+msgid "Select a conversation on the left, or enter a number below to send."
+msgstr "Soldan bir görüşme seçin veya göndermek için aşağıya bir numara girin."
+
+msgid "Message (Enter to send, Shift+Enter for newline)"
+msgstr "Mesaj (göndermek için Enter, yeni satır için Shift+Enter)"
+
+msgid "Sending uses AT+CMGS (PDU mode); retry if the channel is busy. To delete one message, use the bin icon on its bubble."
+msgstr "Gönderme AT+CMGS (PDU modu) kullanır; kanal meşgulse yeniden deneyin. Bir mesajı silmek için balonundaki çöp kutusu simgesini kullanın."
+
+msgid "Syncing from the SIM in the background (AT+CMGL)…"
+msgstr "SIM’den arka planda eşitleniyor (AT+CMGL)…"
+
+msgid "SIM sync started; the list refreshes in a few seconds."
+msgstr "SIM eşitlemesi başladı; liste birkaç saniye içinde yenilenecek."
+
+msgid "Clear local SMS pool"
+msgstr "Yerel SMS havuzunu temizle"
+
+msgid "Only local files will be deleted; messages on the SIM remain."
+msgstr "Yalnızca yerel dosyalar silinir; SIM’deki mesajlar korunur."
+
+msgid "Clear"
+msgstr "Temizle"
+
+msgid "Delete this SMS"
+msgstr "Bu SMS’i sil"
+
+msgid "Deletion cannot be undone."
+msgstr "Silme işlemi geri alınamaz."
+
+msgid "Local only"
+msgstr "Yalnızca yerel"
+
+msgid "Local + SIM"
+msgstr "Yerel + SIM"
+
+msgid "Delete failed"
+msgstr "Silme başarısız"
+
+msgid "Deleted (local + SIM)"
+msgstr "Silindi (yerel + SIM)"
+
+msgid "Deleted (local only)"
+msgstr "Silindi (yalnızca yerel)"
+
+msgid "Enter both a number and a message."
+msgstr "Numara ve mesaj girin."
+
+msgid "Sending…"
+msgstr "Gönderiliyor…"
+
+msgid "Sent; the list refreshes shortly."
+msgstr "Gönderildi; liste birazdan yenilenecek."
+
+msgid "Sending failed: %s (the AT channel is busy, try again shortly)"
+msgstr "Gönderme başarısız: %s (AT kanalı meşgul, birazdan yeniden deneyin)"
+
+msgid "Sending failed: %s"
+msgstr "Gönderme başarısız: %s"
+
+msgid "· %d messages, %d unread · %d conversations"
+msgstr "· %d mesaj, %d okunmamış · %d görüşme"
+
+msgid "· %d messages · %d conversations"
+msgstr "· %d mesaj · %d görüşme"
+
+msgid "The pool is empty. Incoming and sent messages appear here, or select “Sync from SIM”."
+msgstr "Havuz boş. Gelen ve gönderilen mesajlar burada görünür veya “SIM’den eşitle”yi seçin."
+
+msgid "Me: %s"
+msgstr "Ben: %s"
+
+msgid "Delete"
+msgstr "Sil"
