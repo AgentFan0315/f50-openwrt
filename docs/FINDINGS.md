@@ -2063,7 +2063,9 @@ Per boot, from `/run/mu300/boot-timeline` and `radio.log` (seconds after the ker
 | USB host (macOS) answers ping after the reboot command | 24-27 s, lease 3600 s (preinit, K11) | 24-25 s, lease 3600 s |
 
 A tenth F50 boot hung hard (no USB, back in Android after about 20 minutes, `su -c mu300-linux` brought it back):
-the known 6.18 hang of FINDINGS 31m, counted apart. On the U30 Air, ten `ifdown wan; ifup wan` gave the WAN back in
+the known 6.18 hang of FINDINGS 31m, counted apart. K23 and K57 passed on soft reboots (F50 #1 9 + 1 hang counted
+apart, U30 Air 11); cold boots not run (F50 #1 cannot be power-cycled remotely, the U30 Air has a battery). On the U30
+Air, ten `ifdown wan; ifup wan` gave the WAN back in
 8.15-8.17 s each, `dmesg | grep -ci "cfi\|sipa_dele.*panic"` 0, one `AT+SFUN=4` in the whole run.
 
 * **K4** (region probe through a loop device): busybox `dd` seeks. The probe at the region offset took 0.01-0.04 s
@@ -2089,7 +2091,11 @@ the known 6.18 hang of FINDINGS 31m, counted apart. On the U30 Air, ten `ifdown 
   measured) and receiving was not tried. `AT+CMGL=4` marks messages read on this modem: on F50 #1's SIM the first
   listing showed 35 as REC UNREAD, the second 35 as REC READ. The pool never deletes from the SIM.
 * **Update keeps the user's settings (I3)**: on openwrt-luci with the language, theme, `pdptype` and `ipv6` changed,
-  mu300-update's `apply_one` with a newer image and a reboot kept all four, and `dhcp` had no NDP option.
+  mu300-update's `apply_one` with a newer image and a reboot kept all four, and `dhcp` had no NDP option. The device
+  check covered those four (91-mu300-luci). The update now keeps the user's network settings too: 90-mu300 is split
+  the same way (first-install defaults behind `system.mu300.defaults`; an install from before it is told by wan
+  proto `mu300cell`), so the LAN address and mask, `ip6assign`, the APN, hostname, time zone, br-lan's members and
+  flow offloading stay as the user set them (unit tests; not checked on a device).
 * **TTL and the flowtable (K28, R23)**: `mu300-ttl set 64` turned flow offloading off and the sipa_eth0 flowtable
   went (1 -> 0); `off` brought both back.
 * **The panel**: every page (Status, Network locks, SMS, AT terminal, Adapter settings, Device management) in a

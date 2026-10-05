@@ -119,7 +119,7 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K9 | `10-mu300-usb`: stop the early `udhcpd` on `lan` ifup, delete the LAN address from bridge ports that kept it, reattach `rndis0` | a | OpenWrt | with K5 |
 | K10 | `10-mu300-usb`: our macOS re-enumeration on LAN up removed | c | - | our fix for macOS' inactive link (FINDINGS); removed only if K12 passes its gate on macOS |
 | K11 | preinit `06_mu300_early_usb`: restart the early DHCP server in the real root | a | OpenWrt | fixed: the fork hard-codes 192.168.77.x, which is the F50's subnet, wrong on the U30 Air and with a custom LAN address; takes `uci get network.lan.ipaddr` or `mu300-lan-ip` |
-| K12 | `mu300-post`: one 100 ms gadget rebind (`mu300-usb-reset --fast-run`) once br-lan/dnsmasq are up, instead of `--if-no-lease 25` | c | - | gate not passed: shown on macOS only (10/10 boots, ping 24-27 s after reboot); no Windows 11 or Linux USB host could be measured (FINDINGS 35). The `usb-ready` instance is not started; the role check and configfs mount of K67 stay |
+| K12 | `mu300-post`: one 100 ms gadget rebind (`mu300-usb-reset --fast-run`) once br-lan/dnsmasq are up, instead of `--if-no-lease 25` | c | - | gate not passed: shown on macOS only (9/9 boots, ping 24-27 s after reboot); no Windows 11 or Linux USB host could be measured (FINDINGS 35). The `usb-ready` instance is not started; the role check and configfs mount of K67 stay |
 | K13 | `mu300-post`: `usb1` into br-lan | a | OpenWrt | U30 Air's second function on some kernels |
 | K14 | `mu300-post`: the 45 s Wi-Fi retry removed | c | - | kept as a backstop: it acts only when the AP is not up; K15 makes it rare |
 | K15 | `mu300-hw`: `wifi down; wifi up` once the regulatory domain is live | a | OpenWrt | readiness-driven; fixes an AP stuck in AP-DISABLED from the world domain |
@@ -130,7 +130,7 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K20 | `init.d/mu300-atd`: `radio-warmup` instance (`mobile-data radio-on` once nr1 is ready) | a | OpenWrt | Ubuntu: `mu300-mobile-data.service` already starts early; it gets `radio-on` as `ExecStartPre` only if measured faster |
 | K21 | `init.d/mu300-atd`: plugin early-hook marker | b | openwrt-luci | line guarded by `[ -x /usr/libexec/unisoc-modem/lock ]` |
 | K22 | `mu300-vendor`: START 11 -> 09 | a | OpenWrt | 1.4 s earlier CP release (fork's boot timeline) |
-| K23 | `mu300-vendor`: no `sleep 5` before `android-vendor-start` | a | OpenWrt | gate: 10 cold boots per device register on the network every time ("wait modem alive timeout" never appears) - passed (FINDINGS 35): 9 + 11 soft reboots registered at 30.1-31.4 s, no timeout |
+| K23 | `mu300-vendor`: no `sleep 5` before `android-vendor-start` | a | OpenWrt | gate: 10 cold boots per device register on the network every time ("wait modem alive timeout" never appears) - passed on soft reboots (F50 #1 9 + 1 hang counted apart, U30 Air 11); cold boots not run (F50 #1 cannot be power-cycled remotely, the U30 Air has a battery) (FINDINGS 35): registered at 30.1-31.4 s, no timeout |
 | K24 | `sysctl.d/99-mu300-console.conf`: `kernel.printk = 1` | a | all | Ubuntu: `rootfs/overlay/etc/sysctl.d/`; the UART console no longer prints the WLAN log synchronously |
 | K25 | `uci-defaults`: dnsmasq host entry for the USB host with `broadcast` | a | OpenWrt | with K5 |
 | K26 | `uci-defaults`: `earlyusb` firewall zone for `usb0` before br-lan exists | a | OpenWrt | input only, forwarding rejected |
@@ -169,7 +169,7 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K54 | `openwrt-wifi-config`: `noscan 1` | c | - | forces 40 MHz on 2.4 GHz regardless of neighbours (20/40 coexistence) |
 | K55 | `wifi-start`: `insmod` the WLAN modules when `modprobe` cannot | a | all | `modprobe` first, `insmod` from `$K` or `$K/extra` as the fallback |
 | K56 | `mobile-data`: 4G/5G from `AT+CEREG?` instead of `AT+COPS?` | a | all | COPS takes ~2 s on weak service, on every watchdog round |
-| K57 | `mobile-data`: `radio_on` waits for nr0's first URC, does the RIL handshake `AT+SMMSWAP=0` once, waits for `CFUN: 1` after `SFUN=4` instead of power-cycling at once; a lock against two radio state machines | a | all | gate: both devices, 10 cold boots each, registered every time; time to `CFUN: 1` recorded - passed (FINDINGS 35): SMMSWAP OK 20/20, one SFUN=4 per boot, registered every time |
+| K57 | `mobile-data`: `radio_on` waits for nr0's first URC, does the RIL handshake `AT+SMMSWAP=0` once, waits for `CFUN: 1` after `SFUN=4` instead of power-cycling at once; a lock against two radio state machines | a | all | gate: both devices, 10 cold boots each, registered every time; time to `CFUN: 1` recorded - passed on soft reboots (F50 #1 9 + 1 hang counted apart, U30 Air 11); cold boots not run (F50 #1 cannot be power-cycled remotely, the U30 Air has a battery) (FINDINGS 35): SMMSWAP OK 20/20, one SFUN=4 per boot, registered every time |
 | K58 | `mobile-data`: `AT+CAVIMS=1` (IMS bearer for SMS) | a | all | gate: SMS send and receive with the Turkish SIM on both devices still work - not measured (both lines without credit: the same CMS error with CAVIMS 0 and 1); kept |
 | K59 | `mobile-data`: registration from nr0's `+CEREG` URCs, query every 5 s as the fallback | a | all | replaces the 2 s poll loop |
 | K60 | `mobile-data`: bounded address fetch with one idempotent `CGACT=1` reassert; no `CGACT?` query first | a | all | fork measured "CGACT up, no address for 40 s" on NR |
@@ -179,7 +179,7 @@ Fork commit references are short SHAs on `kanoqwq/clean-tf-7.2`.
 | K64 | `mobile-data`: `accept_ra 2` for IPV4V6 without an interface identifier | b | openwrt-luci | relay mode; the netifd path only |
 | K65 | `mobile-data`: early lock replay hook of the plugin | b | openwrt-luci | inert without `/usr/libexec/unisoc-modem/lock` |
 | K66 | `mobile-data radio-on` subcommand | a | all | used by K20 |
-| K67 | `mu300-usb-reset`: no rebind in host role, mount configfs when init unmounted it, `--fast-run` | a | all | with K12 |
+| K67 | `mu300-usb-reset`: no rebind in host role, mount configfs when init unmounted it, `--fast-run` | a | all | with K12; `--fast-run` and `--ready` stay in `mu300-usb-reset` for manual use, with no boot-time caller since K12 went to c |
 | K68 | `led-status` (F50 RGB states, boot chase, Wi-Fi lamp, per-lamp switches) | x | - | f50-leds-fixes: blue 4G, white (green channel) 5G, red without service, Wi-Fi on `keyboard-backlight`, measured with an observer there; boot chase and switches are a follow-up |
 | K69 | `mu300-sms` + `mu300-smsd` (SMS pool) | b | openwrt-luci | D11 |
 
