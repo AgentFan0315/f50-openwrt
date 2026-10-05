@@ -15,9 +15,14 @@ MOUNT_OPTS=noatime
 [ "${MU300_RO:-}" != 1 ] || MOUNT_OPTS=ro,noload
 
 if [ "$1" = -u ]; then
-    L=$(grep " $2 " /proc/mounts | cut -d' ' -f1)
-    # only a loop is ours to detach: the SD card is a block device of its own
-    umount "$2"; case "$L" in */loop*) losetup -d "$L" ;; esac; echo UNMOUNTED; exit 0
+    L=$(grep " $2 " "${MU300_MOUNTS:-/proc/mounts}" | cut -d' ' -f1)
+    umount "$2"
+    # only a loop is ours to detach: the SD card is a block device of its own. Android's umount (toybox) frees the
+    # loop of what it unmounts by itself, and a losetup -d after that fails: only a loop still attached is detached.
+    case "$L" in
+        */loop*) [ ! -e "${MU300_SYSFS:-/sys}/block/${L##*/}/loop/backing_file" ] || losetup -d "$L" ;;
+    esac
+    echo UNMOUNTED; exit 0
 fi
 # the SD card: a block device of its own, no loop. Same checks as for the region, for the card's label.
 if [ -n "${MU300_SD_DEV:-}" ]; then
