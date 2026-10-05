@@ -237,6 +237,12 @@ work_setup() {
     chmod 700 "$W"
     W=$(cd "$W" && pwd -P)                   # as /proc/mounts names it
 }
+# the misc block read at the start, kept as it was: arm_linux writes it back when the armed one does not verify
+misc_save() {
+    dd if="$MISC" of="$W/misc-bc-live.bin" bs=1 skip=2048 count=32 2>/dev/null &&
+        [ "$(od -An -tx1 -v "$W/misc-bc-live.bin" | tr -d ' \n')" = "$LIVE_BC" ] ||
+        die "$(t 'could not keep a copy of the misc block; nothing was changed')"
+}
 payload_unpack() {  # the two payload files copied out of the zip into W, and only those copies checked and used
     _need=$(( $(unzip -l "$ZIPFILE" "payload/*" | awk 'END { print $1 }') + 512 * 1048576 ))
     # -P: one line per filesystem (busybox puts a long device name on a line of its own)
@@ -310,6 +316,10 @@ aimed_by_trust() {  # aimed_by_trust sd|internal
         [ "$1" = internal ] || [ "$sd_ex" = yes ]
     fi
 }
+# The settings this run erases with (MU300_MODE=wipe, MU300_SD_ERASE, MU300_REGION_OVERWRITE): after a successful
+# install each becomes a comment in the trusted file, so that a standing one never applies to a later flash (the
+# second zip of two would wipe the first system, every update the home directories, a new card would be erased).
+USED_KEYS=
 plan_storage() {
     region_probe || die "$(t 'could not read the partition table')"
     region_find_existing
@@ -340,12 +350,13 @@ $(t 'Take the card out and install the zip again, or install to the card (MU300_
             region_dirty
             [ "$DIRTY" = 0 ] || { [ "${MU300_REGION_OVERWRITE:-}" = yes ] && aimed_by_trust internal; } ||
                 die "$(t 'The free space behind the partitions is not empty ({1} of 16 samples hold data); it may be used by this firmware. To use it anyway, put MU300_STORAGE=internal and MU300_REGION_OVERWRITE=yes into {2}, a file only root can change.' "$DIRTY" "$TRUSTED_CONF")"
+            [ "$DIRTY" = 0 ] || USED_KEYS="$USED_KEYS MU300_REGION_OVERWRITE"
         fi
     fi
     INTERNAL_EXISTS=0; [ "$int_existing" = yes ] && INTERNAL_EXISTS=1
     FORMAT=0; UPDATE=0
     if [ "$existing" = yes ]; then
-        case ${MU300_MODE:-update} in update) UPDATE=1 ;; wipe) FORMAT=1 ;; esac
+        case ${MU300_MODE:-update} in update) UPDATE=1 ;; wipe) FORMAT=1; USED_KEYS="$USED_KEYS MU300_MODE" ;; esac
     else
         FORMAT=1
     fi
@@ -358,6 +369,7 @@ $(t 'Take the card out and install the zip again, or install to the card (MU300_
         fi
         die "$(t 'Installing to the SD card ({1}, {2}) erases everything on it. To allow that, put MU300_STORAGE=sd and MU300_SD_ERASE=yes into {3}, a file only root can change.' "$SD_DEV" "$(gib "$SD_BYTES")" "$TRUSTED_CONF")"
     fi
+    if [ "$SD_MODE" = 1 ] && [ "$FORMAT" = 1 ]; then USED_KEYS="$USED_KEYS MU300_SD_ERASE"; fi
 }
 inspect_target() {  # which systems the existing filesystem holds, and its Ubuntu release: mounted read-only
     HAVE_SYSTEMS=; HAVE_UBUNTU=
@@ -394,10 +406,13 @@ plan_print() {
     else
         echo "  $(t 'storage:        internal, offset {1}, {2} ({3})' "$INT_OFF" "$(gib "$TARGET_SIZE")" "$(src_of MU300_STORAGE)")"
     fi
-    echo "  $(t 'filesystem:     {1}' "$([ "$FORMAT" = 1 ] && t 'CREATE new ext4 (erases what is there)' || t 'keep: settings and data of {1} are kept' "$OS")")"
+    echo "  $(t 'filesystem:     {1} ({2})' "$([ "$FORMAT" = 1 ] && t 'CREATE new ext4 (erases what is there)' || t 'keep: settings and data of {1} are kept' "$OS")" "$(src_of MU300_MODE)")"
     [ -z "$HAVE_SYSTEMS" ] || echo "  $(t 'already there:  {1}' "$HAVE_SYSTEMS")"
     echo "  $(t 'boots:          {1} ({2})' "$BOOT_OS" "$(src_of MU300_BOOT_OS)")"
-    echo "  $(t 'default boot:   {1}' "$([ "$DEFAULT_LINUX" = 1 ] && t 'Linux (Android after {1} failed boots in a row)' "$BOOT_ATTEMPTS" || t 'Android, Linux on demand')")"
+    echo "  $(t 'default boot:   {1} ({2})' "$([ "$DEFAULT_LINUX" = 1 ] && t 'Linux, Android after failed boots' || t 'Android, Linux on demand')" "$(src_of MU300_BOOT)")"
+    echo "  $(t 'boot attempts:  {1} failed boots in a row, then Android ({2})' "$BOOT_ATTEMPTS" "$(src_of MU300_BOOT_ATTEMPTS)")"
+    echo "  $(t 'hotspot:        {1} ({2})' "$([ "$IMPORT_HOTSPOT" = 1 ] && t 'name and password copied from Android' || t 'not copied')" "$(src_of MU300_HOTSPOT)")"
+    echo "  $(t 'GPU files:      {1} ({2})' "$([ "$GPU" = yes ] && t 'included' || t 'not included')" "$(src_of MU300_GPU)")"
     if [ -n "${MU300_PASSWORD:-}" ]; then
         echo "  $(t 'password:       from {1}, written to {2}' "$(src_of MU300_PASSWORD)" "$PW_FILE")"
     else
@@ -420,20 +435,38 @@ write_example() {
         echo "# Settings marked (root) are taken only from $TRUSTED_CONF, which only root can change: any app can write"
         echo "# to $SDCARD. Copy this file there with: su -c 'cp $SDCARD/mu300-install.conf $TRUSTED_CONF && chmod 600 $TRUSTED_CONF'"
         echo "# Values of the last run (${TAG:-}, $(date '+%Y-%m-%d %H:%M')) are shown; a line starting with # is not used."
-        echo "#MU300_STORAGE=$([ "${SD_MODE:-0}" = 1 ] && echo sd || echo internal)        # internal or sd"
-        echo "#MU300_SD_ERASE=yes            # (root) allow formatting the SD card for Linux: everything on it is erased"
-        echo "#MU300_REGION_OVERWRITE=yes    # (root) use internal free space that holds data"
-        echo "#MU300_MODE=update             # update (keep settings and data), or wipe (root)"
-        echo "#MU300_BOOT_OS=${BOOT_OS:-${OS:-}}           # ubuntu or openwrt: which system boots"
-        echo "#MU300_BOOT=linux              # linux (default boot, Android after failed boots) or android"
-        echo "#MU300_BOOT_ATTEMPTS=${BOOT_ATTEMPTS:-5}          # 1-6 failed boots in a row before Android"
-        echo "#MU300_HOTSPOT=yes             # copy Android's hotspot name and password"
-        echo "#MU300_GPU=yes                 # Mali GPU (OpenCL) files"
-        echo "#MU300_PASSWORD=               # (root) 6+ characters; empty: generated"
-        echo "#MU300_PASSWORD_FILE=sdcard    # (root) write the password to $PW_FILE_SDCARD instead of $PW_FILE_ROOT"
-        echo "#MU300_DEVICE=${DEVICE:-f50}              # (root) f50 or u30air, only when the model is not recognised"
-        echo "#MU300_LANG=${MU300_LANG:-en}                # en, tr or zh"
-        echo "#MU300_DRY_RUN=1               # only show what would be done"
+        echo "# To use a setting, remove the # in front of its key (only there: the explanation stays a comment line)."
+        echo "# MU300_MODE=wipe, MU300_SD_ERASE, MU300_REGION_OVERWRITE and MU300_PASSWORD count for one install: once a"
+        echo "# successful install has used one, the installer turns its line in $TRUSTED_CONF into a comment."
+        echo
+        echo "# internal or sd"
+        echo "#MU300_STORAGE=$([ "${SD_MODE:-0}" = 1 ] && echo sd || echo internal)"
+        echo "# (root) allow formatting the SD card for Linux: everything on it is erased"
+        echo "#MU300_SD_ERASE=yes"
+        echo "# (root) use internal free space that holds data"
+        echo "#MU300_REGION_OVERWRITE=yes"
+        echo "# update (keep settings and data), or wipe (root)"
+        echo "#MU300_MODE=update"
+        echo "# ubuntu or openwrt: which system boots"
+        echo "#MU300_BOOT_OS=${BOOT_OS:-${OS:-}}"
+        echo "# linux (default boot, Android after failed boots) or android"
+        echo "#MU300_BOOT=linux"
+        echo "# 1-6 failed boots in a row before Android"
+        echo "#MU300_BOOT_ATTEMPTS=${BOOT_ATTEMPTS:-5}"
+        echo "# copy Android's hotspot name and password: yes or no"
+        echo "#MU300_HOTSPOT=yes"
+        echo "# Mali GPU (OpenCL) files: yes or no"
+        echo "#MU300_GPU=yes"
+        echo "# (root) 6+ characters; empty: generated"
+        echo "#MU300_PASSWORD="
+        echo "# (root) write the password to $PW_FILE_SDCARD instead of $PW_FILE_ROOT"
+        echo "#MU300_PASSWORD_FILE=sdcard"
+        echo "# (root) f50 or u30air, only when the model is not recognised"
+        echo "#MU300_DEVICE=${DEVICE:-f50}"
+        echo "# en, tr or zh"
+        echo "#MU300_LANG=${MU300_LANG:-en}"
+        echo "# only show what would be done"
+        echo "#MU300_DRY_RUN=1"
     } > "$_new" ) 2>/dev/null &&
         [ -f "$_new" ] && [ ! -L "$_new" ] && rm -f "$_ex" && mv -f "$_new" "$_ex" 2>/dev/null
     rm -f "$_new" 2>/dev/null
@@ -539,29 +572,56 @@ install_boot() {
 arm_linux() {  # the Linux slot's trial block, built from the misc block read at the start; misc must still hold that
     _blk=$W/ramdisk/etc/misc-bc-slot-$LINUX_SLOT-trial.bin
     [ "$(hex_at "$MISC" 2048 32)" = "$LIVE_BC" ] || die "$(t 'misc changed during the installation; Linux was not armed. Install the zip again.')"
-    dd if="$_blk" of="$MISC" bs=1 seek=2048 conv=notrunc 2>/dev/null; sync
-    [ "$(hex_at "$MISC" 2048 32)" = "$(od -An -tx1 -v "$_blk" | tr -d ' \n')" ] ||
-        die "$(t 'misc did not verify after writing; reboot normally, Android is not affected')"
+    if dd if="$_blk" of="$MISC" bs=1 seek=2048 conv=notrunc 2>/dev/null && sync &&
+        [ "$(hex_at "$MISC" 2048 32)" = "$(od -An -tx1 -v "$_blk" | tr -d ' \n')" ]; then
+        return 0
+    fi
+    # misc may now hold anything: the block it held before goes back, and is read back too
+    dd if="$W/misc-bc-live.bin" of="$MISC" bs=1 seek=2048 conv=notrunc 2>/dev/null || true
+    sync || true
+    [ "$(hex_at "$MISC" 2048 32)" != "$LIVE_BC" ] ||
+        die "$(t 'misc did not verify after writing; the block it held before was written back and verified, so Android boots as before. Linux was not armed.')"
+    # W goes when this exits: the block is kept where root can still reach it
+    _keep=$WORK_PARENT/mu300-misc-bc-before.bin
+    cp "$W/misc-bc-live.bin" "$_keep" 2>/dev/null || true
+    die "$(t 'misc did not verify after writing, and the block it held before could not be written back: misc holds unknown bytes, and the device may not start Android. Do not reboot. Write the saved block back as root: {1}' "dd if=$_keep of=$MISC bs=1 seek=2048 conv=notrunc")"
 }
 pw_text() { printf 'MU300 Linux %s, %s\nuser: %s\npassword: %s\nDelete this file after the first login.\n' "$TAG" "$(date '+%Y-%m-%d %H:%M')" "$_users" "$PW"; }
-# a MU300_PASSWORD line in the trusted conf has done its job: it becomes a comment (the file stays root's, mode 600).
-# A key is matched as conf_load reads it (blanks around and inside it do not count); a conf inside the zip is never
-# edited.
-conf_drop_password() {
-    awk '{ l = $0; sub(/^[ \t]*/, "", l); k = l; sub(/=.*/, "", k); gsub(/[ \t]/, "", k)
-           if (index(l, "=") && k == "MU300_PASSWORD") print "# MU300_PASSWORD was used by the installer and removed"; else print }' "$TRUSTED_CONF"
+# between quotes: a password of the conf file may hold blanks
+pw_show() { echo "  $(t 'password for {1}: "{2}"   (also in {3}; delete that file after the first login)' "$_users" "$PW" "$PW_FILE")"; }
+# Shown and saved before anything is written: android-install.sh puts the hash into the systems, and a run that fails
+# or is killed after that must not leave a Linux whose password nobody has seen. No file, no installation.
+save_password() {
+    _users=root; [ "$OS" != ubuntu ] || _users=ubuntu
+    replace_file "$PW_FILE" pw_text || die "$(t 'could not write {1}; nothing was installed' "$PW_FILE")"
+    pw_show
 }
+# A MU300_PASSWORD line in the trusted conf, and an erasing setting this run used (USED_KEYS), have done their job:
+# each becomes a comment (the file stays root's, mode 600). A key is matched as conf_load reads it (blanks around and
+# inside it do not count); a conf inside the zip is never edited.
+conf_drop_used() {
+    awk -v d="$_drop " '{ l = $0; sub(/^[ \t]*/, "", l); k = l; sub(/=.*/, "", k); gsub(/[ \t]/, "", k)
+           if (index(l, "=") && k != "" && index(d, " " k " ")) print "# " k " was used by the installer and removed"; else print }' "$TRUSTED_CONF"
+}
+# Linux is armed by now: nothing here may fail the run (main ignores its status), or customize.sh would call an
+# installed Linux "not installed"
 report() {
     _ip=192.168.77.1; [ "$DEVICE" != u30air ] || _ip=192.168.78.1
-    _users=root; [ "$OS" != ubuntu ] || _users=ubuntu
-    replace_file "$PW_FILE" pw_text || warn "$(t 'could not write {1}' "$PW_FILE")"
-    if [ "${SRC_MU300_PASSWORD:-}" = "$TRUSTED_CONF" ] && conf_trusted "$TRUSTED_CONF"; then
-        replace_file "$TRUSTED_CONF" conf_drop_password ||
-            warn "$(t 'could not remove MU300_PASSWORD from {1}; remove it by hand' "$TRUSTED_CONF")"
+    _drop=
+    for _k in $USED_KEYS MU300_PASSWORD; do
+        eval "_s=\${SRC_$_k:-}"
+        [ "$_s" != "$TRUSTED_CONF" ] || _drop="$_drop $_k"
+    done
+    if [ -n "$_drop" ] && conf_trusted "$TRUSTED_CONF"; then
+        if replace_file "$TRUSTED_CONF" conf_drop_used; then
+            say "$(t 'used by this installation and removed from {1}:{2}' "$TRUSTED_CONF" "$_drop")"
+        else
+            warn "$(t 'could not remove{1} from {2}; remove it by hand' "$_drop" "$TRUSTED_CONF")"
+        fi
     fi
     echo
     say "$(t 'Done. Reboot to start {1}.' "$BOOT_OS")"
-    echo "  $(t 'password for {1}: {2}   (also in {3}; delete that file after the first login)' "$_users" "$PW" "$PW_FILE")"
+    pw_show
     echo "  $(t 'USB network: {1}   SSH: {2}' "$_ip" "$_users@$_ip")"
     echo "  $(t 'switch systems: mu300-os ubuntu|openwrt   back to Android: mu300-next-boot android')"
     echo "  $(t 'If Linux does not start, the device returns to Android by itself.')"
@@ -579,6 +639,7 @@ main() {
     detect_device
     slot_setup
     work_setup
+    misc_save
     payload_unpack
     plan_storage
     inspect_target
@@ -588,10 +649,11 @@ main() {
     build_vendor
     build_boot
     build_password
+    save_password
     install_systems
     install_boot
     arm_linux
-    report
+    report || true
 }
 [ -z "${MU300_LIB:-}" ] || return 0
 main "$@"

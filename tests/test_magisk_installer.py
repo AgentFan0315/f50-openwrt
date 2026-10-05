@@ -221,6 +221,64 @@ class Conf(ShellTest):
                              MU300_SDCARD=sd, MU300_TRUSTED_CONF=adb / 'mu300-install.conf', MU300_TRUSTED_UID=uid)
                 self.assertIn(want, r.stdout)
 
+    def test_every_example_line_loads_once_uncommented(self):
+        # the documented way: copy the example, remove the # of a line, install again. An explanation on the key's
+        # own line would become part of its value, and the value would be refused.
+        sd = self.tmp / 'sd'
+        sd.mkdir()
+        for shell in self.each_shell():
+            r = self.lib(shell, 'write_example', MU300_SDCARD=sd)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            ex = (sd / 'mu300-install.conf.example').read_text()
+            lines = ex.splitlines()
+            keys = [l for l in lines if re.match(r'#MU300_[A-Z_]+=', l)]
+            self.assertEqual(len(keys), 14, ex)
+            for line in keys:
+                i = lines.index(line)
+                self.assertTrue(lines[i - 1].startswith('# '), line)          # its explanation, on a line of its own
+                f = self.tmp / 'c.conf'
+                f.write_text('\n'.join(lines[:i] + [line[1:]] + lines[i + 1:]) + '\n')
+                r = self.lib(shell, f'conf_load "{f}" trusted; conf_check; echo LOADED')
+                self.assertEqual(r.returncode, 0, (line, r.stdout + r.stderr))
+                self.assertIn('LOADED', r.stdout, line)
+                self.assertNotIn('not valid', r.stdout, line)
+
+    def arm(self, shell, mode):
+        """arm_linux on a fake misc whose block is LIVE, with a dd that, for MODE, fails or writes the wrong bytes
+        when it writes to misc (stuck: every write to misc goes wrong, the restore too)"""
+        w, adb = self.tmp / 'w', self.tmp / 'adb'
+        shutil.rmtree(w, ignore_errors=True); shutil.rmtree(adb, ignore_errors=True)
+        (w / 'ramdisk/etc').mkdir(parents=True); adb.mkdir()
+        (w / 'ramdisk/etc/misc-bc-slot-b-trial.bin').write_bytes(b'TRIA' * 8)
+        misc = self.tmp / 'misc'
+        misc.write_bytes(b'\0' * 2048 + b'LIVE' * 8 + b'\0' * 2016)
+        dd = ('dd() { case "$*" in *"of=$MISC"*) case "$MODE:$*" in fail:*trial*) return 1 ;; '
+              'garble:*trial*|stuck:*) printf garbage | command dd of="$MISC" bs=1 seek=2048 conv=notrunc 2>/dev/null; '
+              'return 0 ;; esac ;; esac; command dd "$@"; }; ')
+        r = self.lib(shell, f'W="{w}"; MISC="{misc}"; LINUX_SLOT=b; LIVE_BC=$(hex_at "$MISC" 2048 32); misc_save; '
+                            + dd + f'MODE={mode}; arm_linux; echo ARMED', MU300_WORK_PARENT=adb)
+        return r, misc.read_bytes()[2048:2080]
+
+    def test_misc_that_does_not_verify_gets_its_block_back(self):
+        for shell in self.each_shell():
+            r, bc = self.arm(shell, 'ok')
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(bc, b'TRIA' * 8)
+            for mode in ('fail', 'garble'):
+                r, bc = self.arm(shell, mode)
+                self.assertEqual(r.returncode, 1, (mode, r.stdout + r.stderr))
+                self.assertEqual(bc, b'LIVE' * 8, mode)                       # the block it held, written back
+                self.assertIn('written back', r.stdout, mode)
+                self.assertIn('Android boots as before', r.stdout, mode)
+            r, bc = self.arm(shell, 'stuck')
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+            self.assertNotEqual(bc, b'LIVE' * 8)
+            self.assertNotIn('Android boots as before', r.stdout)
+            self.assertIn('Do not reboot', r.stdout)                           # said plainly, with what to do
+            saved = self.tmp / 'adb/mu300-misc-bc-before.bin'
+            self.assertEqual(saved.read_bytes(), b'LIVE' * 8)
+            self.assertIn(f'if={saved} of={self.tmp}/misc', r.stdout)
+
     def test_cleanup_never_removes_a_mounted_filesystem(self):
         w = self.tmp / 'work'
         for shell in self.each_shell():
@@ -591,8 +649,26 @@ class Plan(InstallerCase):
         ex = (self.fake.root / 'sdcard/mu300-install.conf.example').read_text()
         for k in ('MU300_STORAGE', 'MU300_SD_ERASE', 'MU300_BOOT', 'MU300_PASSWORD', 'MU300_DRY_RUN'):
             self.assertIn(k, ex)
-        self.assertRegex(ex, r'#MU300_SD_ERASE=yes +# \(root\)')       # which keys need the trusted file
+        self.assertRegex(ex, r'# \(root\)[^\n]*\n#MU300_SD_ERASE=yes\n')  # which keys need the trusted file
         self.assertIn('data/adb/mu300-install.conf', ex)
+
+    def test_plan_names_the_source_of_every_value(self):
+        self.existing_filesystem(systems=('openwrt',))
+        conf = ('MU300_DRY_RUN=1\nMU300_MODE=update\nMU300_BOOT=linux\nMU300_BOOT_ATTEMPTS=3\nMU300_HOTSPOT=no\n'
+                'MU300_GPU=no\nMU300_BOOT_OS=openwrt\nMU300_STORAGE=internal\n')
+        r = self.run_installer(conf=conf)
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        plan = r.stdout.split('Plan', 1)[1]
+        for label in ('storage:', 'filesystem:', 'boots:', 'default boot:', 'boot attempts:', 'hotspot:', 'GPU files:'):
+            [line] = [l for l in plan.splitlines() if l.strip().startswith(label)]
+            self.assertIn('sdcard/mu300-install.conf', line, line)
+        self.assertRegex(plan, r'boot attempts: +3 ')
+        self.assertRegex(plan, r'hotspot: +not copied')
+        r = self.run_installer(conf='MU300_DRY_RUN=1\n')
+        plan = r.stdout.split('Plan', 1)[1]
+        for label in ('default boot:', 'boot attempts:', 'hotspot:', 'GPU files:'):
+            [line] = [l for l in plan.splitlines() if l.strip().startswith(label)]
+            self.assertIn('(default)', line, line)
 
     def test_example_conf_is_never_written_through_a_link(self):
         victim = self.tmp / 'victim'
@@ -669,7 +745,8 @@ class Install(InstallerCase):
         return cpio_all(unlz4_legacy(ramdisk_of(img)))
 
     def password_of(self, out):
-        m = re.search(r'password for \w+: (\S+)', out)
+        """the password as the output shows it, whole (between quotes: it may hold blanks)"""
+        m = re.search(r'password for \w+: "(.*)"   \(also in ', out)
         self.assertTrue(m, out)
         return m.group(1)
 
@@ -736,7 +813,67 @@ class Install(InstallerCase):
         r = self.run_installer(extra_env={'FAKE_INSTALL_FAILS': '1'})
         self.assertEqual(r.returncode, 1)
         self.assertIn('boot_b and misc were not changed', r.stdout)
+        (self.fake.root / 'data/adb/mu300-linux-password.txt').unlink()      # saved first (the next test)
         self.assertTrue(self.nothing_written(except_fs=True))
+
+    def test_password_is_saved_before_anything_is_written(self):
+        # android-install.sh puts the hash into the systems: a run that fails or is killed after that must not
+        # leave a Linux whose password was never shown or saved
+        r = self.run_installer(extra_env={'FAKE_INSTALL_FAILS': '1'})
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        pw = self.password_of(r.stdout)
+        self.assertLess(r.stdout.index('password for'), r.stdout.index('Installing'))
+        f = self.fake.root / 'data/adb/mu300-linux-password.txt'
+        self.assertRegex(f.read_text(), rf'(?m)^password: {re.escape(pw)}$')
+        self.assertEqual(f.stat().st_mode & 0o777, 0o600)
+        # a password file that cannot be written stops the run before anything is installed
+        self.device()
+        (self.fake.root / 'sdcard/mu300-linux-password.txt').mkdir()
+        r = self.run_installer(trusted='MU300_PASSWORD_FILE=sdcard\n')
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn('could not write', r.stdout)
+        self.assertNotIn('Installing', r.stdout)
+        self.assertFalse((self.fake.root / 'install.env').exists())
+        self.assertTrue(self.nothing_written())
+
+    def test_destructive_keys_are_used_once(self):
+        # a standing wipe, erase or overwrite in /data/adb would apply to every later flash: once used, each becomes
+        # a comment, the way a used password does
+        conf = self.fake.root / 'data/adb/mu300-install.conf'
+        self.existing_filesystem(systems=('openwrt',))
+        r = self.run_installer(trusted='MU300_MODE=wipe\nMU300_BOOT_ATTEMPTS=3\n')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('FORMAT=1', (self.fake.root / 'install.env').read_text())
+        text = conf.read_text()
+        self.assertNotRegex(text, r'(?m)^\s*MU300_MODE')
+        self.assertIn('# MU300_MODE was used by the installer and removed', text)
+        self.assertIn('MU300_BOOT_ATTEMPTS=3\n', text)
+        self.assertEqual(conf.stat().st_mode & 0o777, 0o600)
+        self.assertRegex(r.stdout, r'MU300_MODE.*removed|removed.*MU300_MODE')     # the report says so
+        r = self.run_installer(trusted=text)                                  # the next flash is an update
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('FORMAT=0', (self.fake.root / 'install.env').read_text())
+        # the card's erase: once
+        self.device(card=bytes(1 << 20))
+        r = self.run_installer(trusted='MU300_STORAGE=sd\nMU300_SD_ERASE=yes\n')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        text = conf.read_text()
+        self.assertIn('MU300_STORAGE=sd\n', text)
+        self.assertNotRegex(text, r'(?m)^\s*MU300_SD_ERASE')
+        self.assertIn('# MU300_SD_ERASE was used by the installer and removed', text)
+        # an erase not used (an update of a mu300sd card) stays
+        self.device(card=fake_ext4_bytes('mu300sd'))
+        r = self.run_installer(trusted='MU300_SD_ERASE=yes\n')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(conf.read_text(), 'MU300_SD_ERASE=yes\n')
+        # the region overwrite: once
+        self.device()
+        with open(self.fake.root / 'dev/block/mmcblk0', 'r+b') as f:
+            f.truncate(16 << 30)
+            f.seek(((2048 + (8 << 21)) // 4096 + 1) * 4096 * 512 + (512 << 10)); f.write(b'data' * 1024)
+        r = self.run_installer(trusted='MU300_REGION_OVERWRITE=yes\n')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('# MU300_REGION_OVERWRITE was used by the installer and removed', conf.read_text())
 
     def test_misc_changed_meanwhile_is_not_armed(self):
         # a stub android-install.sh that changes misc while "installing" (an OTA, another installer)
@@ -757,7 +894,7 @@ class Install(InstallerCase):
         conf = self.fake.root / 'data/adb/mu300-install.conf'
         r = self.run_installer(trusted='MU300_BOOT_ATTEMPTS=3\nMU300_PASSWORD=correct horse\n')
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(self.password_of(r.stdout), 'correct')                # shown (the line cuts at the blank)
+        self.assertEqual(self.password_of(r.stdout), 'correct horse')          # shown whole, blank and all
         self.assertIn('correct horse', (self.fake.root / 'data/adb/mu300-linux-password.txt').read_text())
         self.assertIn('correct horse'.encode().hex()[:20], (self.fake.root / 'install.env').read_text())
         text = conf.read_text()

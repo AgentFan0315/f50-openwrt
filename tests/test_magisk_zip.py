@@ -34,14 +34,14 @@ class Customize(ShellTest):
         (self.tmp / 'magisk').mkdir()
         os.symlink(BUSYBOX, self.tmp / 'magisk' / 'busybox')
 
-    def zip_with(self, install_sh):
-        z = self.tmp / 'm.zip'
+    def zip_with(self, install_sh, name='m.zip', body='#!/system/bin/sh\n'):
+        z = self.tmp / name
         with zipfile.ZipFile(z, 'w') as f:
             f.writestr('mu300/install.sh', install_sh + '\n')
             f.writestr('module.prop', 'id=x\n')
-            f.writestr('action.sh', '#!/system/bin/sh\n')
-            f.writestr('switch.sh', '#!/system/bin/sh\n')
-            f.writestr('system/bin/mu300-linux', '#!/system/bin/sh\n')
+            f.writestr('action.sh', body)
+            f.writestr('switch.sh', body)
+            f.writestr('system/bin/mu300-linux', body)
         return z
 
     def run_customize(self, shell, install_sh, bootmode='true'):
@@ -68,6 +68,17 @@ class Customize(ShellTest):
                 self.assertIn('ABORT', r.stdout)
                 self.assertIn(word, r.stdout)
                 self.assertFalse(mod.exists())
+
+    def test_module_files_come_from_the_zip_as_it_was_checked(self):
+        # magisk --install-module /sdcard/...: any app can replace the zip while the installation runs, and
+        # system/* runs as root. The module's files are taken in the first unzip, with the installer.
+        evil = self.zip_with('exit 0', name='evil.zip', body='#!/system/bin/sh\ntouch /pwned\n')
+        for shell in self.each_shell():
+            r, mod = self.run_customize(shell, f'cp "{evil}" "$ZIPFILE"; exit 0')
+            self.assertNotIn('ABORT', r.stdout, r.stdout + r.stderr)
+            for f in ('switch.sh', 'action.sh', 'system/bin/mu300-linux'):
+                self.assertEqual((mod / f).read_text(), '#!/system/bin/sh\n', f)
+            self.assertEqual(sorted(p.name for p in (self.tmp / 't').iterdir()), [])   # nothing left behind
 
     def test_recovery_is_refused(self):
         for shell in self.each_shell():

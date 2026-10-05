@@ -264,7 +264,8 @@ boots). Beyond that:
 * 32 bytes of `misc`, written last, only when everything before succeeded.
 
 Android's own boot partition, `vbmeta`, the partition table and `userdata` are never written. If the install stops
-before the last step, `misc` is as it was and Android boots.
+before the last step, `misc` is as it was and Android boots. If `misc` itself does not read back right after the last
+step, the installer writes back the block it held before and says whether that worked.
 
 **Back to Android.** From Linux: `sudo mu300-next-boot android`, then `sudo reboot`. Without doing anything, the device
 falls back to Android after 5 failed boots in a row (1-6, `MU300_BOOT_ATTEMPTS` below, `mu300-next-boot attempts N`
@@ -281,8 +282,8 @@ Magisk's install screen cannot ask questions, so the installer decides from what
 settings file changes that. The file is `KEY=VALUE` lines (`#` for comments, quotes optional). It is read, never run;
 a key that is not in the table is reported and ignored, and a value that is not one of those listed stops the
 installer before anything is written. Every run writes `/sdcard/mu300-install.conf.example` with every key, its
-meaning and the value that run used; copy it to `mu300-install.conf`, remove the `#` of what you want, and install
-the zip again. `MU300_DRY_RUN=1` prints the plan and writes nothing; the zip is then not installed as a module.
+meaning (on the comment line above it) and the value that run used; copy it to `mu300-install.conf`, remove the `#`
+in front of the keys you want, and install the zip again. `MU300_DRY_RUN=1` prints the plan and writes nothing; the zip is then not installed as a module.
 
 There are two places for the file, because any app with storage access can write `/sdcard`:
 
@@ -304,6 +305,11 @@ value came from. A permission to erase counts only when the choice of storage it
 too: erasing an SD card needs `MU300_STORAGE=sd` and `MU300_SD_ERASE=yes` both there (or a card that already holds
 `mu300sd`, with no `MU300_STORAGE` set), and overwriting internal space needs `MU300_REGION_OVERWRITE=yes` with
 `MU300_STORAGE=internal` there, or no `MU300_STORAGE`.
+
+A setting that erases counts for one install: once a successful install has used `MU300_MODE=wipe`,
+`MU300_SD_ERASE=yes` or `MU300_REGION_OVERWRITE=yes` from `/data/adb/mu300-install.conf`, the installer turns that line
+into a comment (as it does with `MU300_PASSWORD`) and says so. Otherwise the next zip - the second of two, or an
+update - would wipe or erase again. For another erase, put the line back.
 
 | key | values | from | default |
 |---|---|---|---|
@@ -332,8 +338,9 @@ su -c 'chmod 600 /data/adb/mu300-install.conf'
 
 Only look at what an install would do, with the file on `/sdcard`: `MU300_DRY_RUN=1` on a line of its own.
 
-**The password.** It is never empty and never the image's (`ubuntu`/`ubuntu`, OpenWrt's empty root). It is shown in the
-Magisk output and written to `/data/adb/mu300-linux-password.txt`, which only root reads. Only a trusted
+**The password.** It is never empty and never the image's (`ubuntu`/`ubuntu`, OpenWrt's empty root). It is written to
+`/data/adb/mu300-linux-password.txt`, which only root reads, and shown in the Magisk output (between quotes) before
+anything is installed, so an install that stops later never leaves a password nobody has seen. Only a trusted
 `MU300_PASSWORD_FILE=sdcard` writes it to `/sdcard/mu300-linux-password.txt` instead, where every app with storage
 access can read it. A `MU300_PASSWORD` from `/data/adb/mu300-install.conf` is replaced by a comment in that file after
 a successful install.

@@ -8,21 +8,26 @@ if ! $BOOTMODE; then
     abort "! Install this zip in the Magisk app or with: magisk --install-module <zip> (not from recovery)"
 fi
 [ "${MAGISK_VER_CODE:-0}" -ge 26000 ] || abort "! This zip needs Magisk 26.0 or newer"
-mu300_dir=$TMPDIR/mu300
-rm -rf "$mu300_dir"
-unzip -o -q "$ZIPFILE" 'mu300/*' -d "$TMPDIR" >&2 || abort "! The zip could not be unpacked"
-MU300_DIR=$mu300_dir ZIPFILE=$ZIPFILE MAGISKBIN=${MAGISKBIN:-/data/adb/magisk} \
-    "${MAGISKBIN:-/data/adb/magisk}/busybox" sh "$mu300_dir/install.sh"
+# Everything taken from the zip comes out of it here, once: the zip may lie on /sdcard, where any app can replace it
+# while the installation runs, and the module's files (system/* among them) run as root later.
+mu300_x=$TMPDIR/mu300-zip
+rm -rf "$mu300_x"
+unzip -o -q "$ZIPFILE" 'mu300/*' module.prop action.sh switch.sh 'system/*' -d "$mu300_x" >&2 ||
+    abort "! The zip could not be unpacked"
+MU300_DIR=$mu300_x/mu300 ZIPFILE=$ZIPFILE MAGISKBIN=${MAGISKBIN:-/data/adb/magisk} \
+    "${MAGISKBIN:-/data/adb/magisk}/busybox" sh "$mu300_x/mu300/install.sh"
 mu300_rc=$?
-rm -rf "$mu300_dir"
+rm -rf "$mu300_x/mu300"
 case $mu300_rc in
     0) ;;
-    3) abort "- Dry run: nothing was written, the module was not installed" ;;
-    *) abort "! MU300 Linux was not installed; the messages above say why and what was not changed" ;;
+    3) rm -rf "$mu300_x"; abort "- Dry run: nothing was written, the module was not installed" ;;
+    *) rm -rf "$mu300_x"; abort "! MU300 Linux was not installed; the messages above say why and what was not changed" ;;
 esac
-unzip -o -q "$ZIPFILE" module.prop action.sh switch.sh 'system/*' -d "$MODPATH" >&2 || abort "! The switch module could not be installed"
+mkdir -p "$MODPATH" && cp -R "$mu300_x/module.prop" "$mu300_x/action.sh" "$mu300_x/switch.sh" "$mu300_x/system" "$MODPATH/" ||
+    { rm -rf "$mu300_x"; abort "! The switch module could not be installed"; }
+rm -rf "$mu300_x"
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/switch.sh" 0 0 0755
 set_perm "$MODPATH/action.sh" 0 0 0755
 set_perm "$MODPATH/system/bin/mu300-linux" 0 0 0755
-unset mu300_dir mu300_rc
+unset mu300_x mu300_rc

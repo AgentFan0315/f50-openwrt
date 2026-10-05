@@ -80,10 +80,11 @@ zip (built by CI from the release's own assets; nothing device-specific inside)
     └── mu300-<system>-rootfs.tar.gz
 ```
 
-`customize.sh` is sourced by Magisk. It sets `SKIPUNZIP=1`, refuses recovery mode, unpacks `mu300/` into Magisk's
-`$TMPDIR`, runs `mu300/install.sh` **as a child process** under Magisk's busybox, and turns a non-zero exit status
-into `abort`. Only after success does it extract the switch module's files into `$MODPATH`. It never runs `set -e`
-or `set -u` in Magisk's shell.
+`customize.sh` is sourced by Magisk. It sets `SKIPUNZIP=1`, refuses recovery mode, unpacks `mu300/` and the switch
+module's files into Magisk's `$TMPDIR` in one go, runs `mu300/install.sh` **as a child process** under Magisk's
+busybox, and turns a non-zero exit status into `abort`. Only after success does it copy the module's files from
+`$TMPDIR` into `$MODPATH` - never from the zip again: a zip on `/sdcard` can be replaced while the installation runs,
+and `system/*` runs as root. It never runs `set -e` or `set -u` in Magisk's shell.
 
 > Decision: the installation runs in a child shell. Rejected: running it inside `customize.sh` with `set -eu` and
 > restoring Magisk's options afterwards (kanoqwq 35a1c55), because an error under `errexit` in a sourced file ends
@@ -107,14 +108,22 @@ The child (`mu300-install.sh`) does, in this order, and writes nothing to the eM
    module is not installed).
 7. **Build, all in the work directory.** Vendor files from this device (firmware, the modem_control
    subset, the GPU closure), the vendor overlay tarballs `android-install.sh` already accepts, the four `misc`
-   blocks, the device ramdisk segment, the boot image (`bootimg_from_stock`), the password hash.
+   blocks, the device ramdisk segment, the boot image (`bootimg_from_stock`), the password hash. Then the password
+   is shown and written to its file, before anything is installed: `android-install.sh` puts the hash into the
+   systems, so a run that fails or is killed after that must not leave a Linux whose password nobody has seen. When
+   the file cannot be written the installer stops here, having written nothing.
 8. **Install the systems.** `tools/android-install.sh` with the same `mu300-install.env` `install.sh` writes, run
    by Android's own `/system/bin/sh` and toybox (see "Safety"), from the work directory (`MU300_DEVICE_WORK`). Then the kernel bundle's modules go into every
    system on the Linux filesystem (`mu300-update`'s function).
 9. **Boot image.** `write_boot` (from `mu300-update`) writes it to `boot_<linux slot>` and reads it back (sha256 of
    the image and of the AVB footer). On a mismatch it stops: `misc` is untouched and Android keeps booting.
-10. **Arm.** The Linux slot's trial block goes into `misc` (32 bytes) and is read back.
-11. **Report.** Password, addresses, how to switch and how to get back to Android. The work directory is deleted
+10. **Arm.** The Linux slot's trial block goes into `misc` (32 bytes) and is read back. When the write fails or the
+    read-back differs, the block `misc` held at the start (kept in the work directory since step 5) is written back
+    and read back: then Android boots as before and the installer says so; if even that does not verify, it says
+    plainly that `misc` holds unknown bytes, keeps the old block in `/data/adb/mu300-misc-bc-before.bin` and prints
+    the `dd` command that writes it back, with the advice not to reboot first.
+11. **Report.** Password, addresses, how to switch and how to get back to Android; the settings this run used once
+    and removed (see "Choices"). Nothing in it can fail the run: Linux is armed by then. The work directory is deleted
     (it held this device's proprietary files), but never a filesystem still mounted in it (see "Safety"). The
     reboot is the user's.
 
@@ -254,8 +263,13 @@ An untrusted file may only choose what destroys nothing and reveals nothing. A k
 is reported and ignored, and the installer prints the one command that turns the file into a trusted one:
 `su -c 'cp /sdcard/mu300-install.conf /data/adb/mu300-install.conf && chmod 600 /data/adb/mu300-install.conf'`.
 Untrusted files are read first, trusted ones after them, so a trusted value wins. The plan names the file every
-value came from. A trusted `MU300_SD_ERASE=yes` or `MU300_REGION_OVERWRITE=yes` may stay in `/data/adb` from an
-earlier install, so it counts only for storage the same trust chose: an erase of the card only with
+value came from. A trusted `MU300_MODE=wipe`, `MU300_SD_ERASE=yes` or `MU300_REGION_OVERWRITE=yes` counts for one
+install: after a successful run that used it, its line in `/data/adb/mu300-install.conf` becomes a comment, the way a
+used `MU300_PASSWORD` does (a new file renamed over the old one, mode 600, a comment saying the installer used and
+removed it), and the report names it. Left standing, it would apply to every later flash: the second of two zips
+would wipe the first system, every update the home directories, and a new card would be erased. One that a run did
+not use (an erase on an update) stays, and a conf inside the zip is never edited. A standing one is still possible
+for a file someone else wrote earlier, so it counts only for storage the same trust chose: an erase of the card only with
 `MU300_STORAGE=sd` from a trusted file, or for a card that already holds `mu300sd` when no `MU300_STORAGE` is
 given; a region overwrite only with a trusted `MU300_STORAGE=internal` or without any `MU300_STORAGE`. Otherwise
 an untrusted `MU300_STORAGE=sd` would aim a standing erase at whatever card is in the slot.
@@ -291,7 +305,8 @@ installer; a card with another Linux filesystem is never offered for erasing.
 
 Every run, a refused one too (with what was known by then), writes `/sdcard/mu300-install.conf.example` with every
 key, its meaning, the value this run used and which keys need the trusted file, so the file never has to be typed
-from documentation. Any app can write `/sdcard`, so the file is never opened by its name: the text goes into a new
+from documentation. Each explanation is a comment line of its own above its key: removing the `#` of a key gives a
+line the parser takes as it is (it does not cut a value at `#`, which a password may contain). Any app can write `/sdcard`, so the file is never opened by its name: the text goes into a new
 file with a random name, created exclusively, which is then renamed over `mu300-install.conf.example` - a rename
 replaces whatever is at that name, a link someone put there included, instead of writing through it. (An exclusive
 open of the name itself is not enough: the shells' `set -C` opens an existing non-regular file, such as a link to a
@@ -305,9 +320,10 @@ Never empty, never the image's (`ubuntu`/`ubuntu`, OpenWrt's empty root).
 > rejection sampling, so no bias) unless `MU300_PASSWORD` gives one of 6+ characters. It is hashed on the device to
 > SHA-512 crypt with the bundled static busybox's `mkpasswd` (password on stdin, 16-character random salt) and
 > passed as `PWHASH`, exactly what `install.sh` passes, so `android-install.sh` and the images do not change. The
-> password is shown in the Magisk output and written to `/data/adb/mu300-linux-password.txt` (mode 600, root's: the
-> user may have no other way to read the output later, and `su -c cat` reads it); the report says to delete that
-> file after the first login. Only `MU300_PASSWORD_FILE=sdcard` in a trusted file writes it to
+> password is written to `/data/adb/mu300-linux-password.txt` (mode 600, root's: the user may have no other way to
+> read the output later, and `su -c cat` reads it) and shown in the Magisk output before anything is installed, and
+> shown again at the end, between quotes (a password of the conf file may hold blanks); the report says to delete
+> that file after the first login. Only `MU300_PASSWORD_FILE=sdcard` in a trusted file writes it to
 > `/sdcard/mu300-linux-password.txt` instead. `MU300_PASSWORD` itself is taken only from a trusted file, and a
 > `MU300_PASSWORD` line there is replaced by a comment once it has been used.
 >
@@ -492,11 +508,13 @@ On the devices (Task 14; the F50 test board and the U30 Air, both rooted with Ma
 | GPU closure incomplete | GPU skipped with a message, install continues |
 | `android-install.sh` fails | stops; boot partition and `misc` unchanged; the Linux filesystem may hold a half-installed `<os>.new` that the next run removes |
 | boot image read-back mismatch | stops; `misc` unchanged, Android boots; the Linux slot holds a broken image that is never booted until a later install |
+| `misc` write fails or reads back wrong | the block it held at the start is written back and read back: Android boots as before. If that fails too: says so, keeps the block in `/data/adb/mu300-misc-bc-before.bin` and prints the command that writes it back |
 | power lost during the install | before `misc` is armed: Android boots. After: the armed trial boots the new Linux |
 | Linux does not boot | LK's tries and the 300 s timer return to Android; the module's Action or a new flash retries |
 | Android OTA later | the OTA writes the inactive slot - the Linux one - so Linux disappears and Android switches slot; installing the zip again puts Linux on the other slot (needs the opposite-slot work) |
 | old `mu300-next-boot` with Linux on slot a (a downgraded rootfs) | finds no legacy block files and writes nothing |
 | the conf file holds a password | used, then the line is replaced by a comment |
+| the trusted conf holds `MU300_MODE=wipe`, `MU300_SD_ERASE=yes` or `MU300_REGION_OVERWRITE=yes` | once a successful run used it, the line is replaced by a comment; one the run did not use stays |
 | the module is removed in Magisk | only the switch goes; Linux stays and boots as configured |
 
 ## Out of scope
