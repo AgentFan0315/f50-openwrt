@@ -412,12 +412,15 @@ sudo wifi-client forget                  # delete the saved network
   internet: its own devices and router (private, link-local and CGNAT addresses, and its subnet) are not reachable
   from the LAN, so a guest on the device's USB does not end up on your home or hotel network. From that network
   only ping and answers come in: SSH and the device's other services are closed to it, as they are to the modem
-  (use USB to reach the device). Ubuntu: nftables tables `ip mu300_wifi_nat` and
-  `inet mu300_wifi_filter`, removed on disconnect. OpenWrt: `wlan0` joins the `wan` firewall zone, plus a rule
+  (use USB to reach the device). These rules are up before the radio joins and go, in one step, when it leaves or
+  a join fails or is interrupted; forwarding is turned off again then unless mobile data is sharing. A network
+  on the LAN's own subnet is refused. Ubuntu: nftables tables `ip mu300_wifi_nat` and `inet mu300_wifi_filter`.
+  (A `LAN_CIDRS` entry in vpn.conf does not open the other network to LAN clients either.) OpenWrt: `wlan0` joins the `wan` firewall zone, plus a rule
   (`mu300-wifi-client-private`) for the private addresses. With the [VPN](#vpn) on, clients still go through the
   tunnel, and its kill switch covers `wlan0` as it does the modem.
 * Names are shown as the network sends them when they are printable UTF-8; control characters, terminal escape
-  sequences and bytes that are not UTF-8 are shown as `\xNN`.
+  sequences, invisible and bidirectional characters, and bytes that are not UTF-8 are shown as `\xNN`. Such a
+  network cannot be picked from the `mu300-toolkit` list; join it with `sudo wifi-client connect` and its real name.
 * The Wi-Fi route has metric 50 and mobile data 100, so with both the Wi-Fi is used and the SIM stays idle.
 
 ### Updating
