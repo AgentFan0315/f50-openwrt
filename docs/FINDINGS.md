@@ -1703,8 +1703,19 @@ host deferred on its card-detect GPIO and always came second.
   is `MMC` and the card candidates from the `SD` disks, looks for the region only on the eMMC and never past its
   end, and writes `<eMMC>@<offset>` to `/run/mu300-root-dev` (`mu300-update` takes any `@` there for internal);
   early-recorder and android-vendor-start find the eMMC's partitions by name or type. (The Android-side tools run
-  on the stock kernel, where the eMMC is `mmcblk0`, and are unchanged; `ueventd-perms.sh` is generated from Android's
-  `ueventd.rc` and keeps its rules.)
+  on the stock kernel, where the eMMC is `mmcblk0`, and are unchanged.)
+* Every Linux-side lookup by GPT name - init's `misc` and `boot_<slot>` (the BCB, the persistent log,
+  `/run/mu300/misc-dev` for mu300-next-boot), early-recorder's log partition, `mu300-update`'s kernel partition and
+  the `by-name` links - looks only at the eMMC: the disk of type `MMC`, else the first `mmcblk` disk that is not `SD`,
+  never a card. A card can carry the same names (a raw clone of a device backup) and would otherwise be written to.
+* `ueventd-perms.sh` no longer touches block devices by number: Android's `mmcblk1p*` rule (the card, for vold,
+  `root:system`) is dropped - no vendor daemon run here opens the card, and gid 1000 is the first user on Linux -
+  and `mmcblk0rpmb` became `mmcblk*rpmb` (only the eMMC has an RPMB partition).
+* The cost of the kernel wait: if the eMMC's host never binds, the card slot's host stays deferred, so there is no
+  root on the card without a working eMMC host.
+
+Verification on F50 #1 (6.18.55 with the port, OpenWrt on the card, soft reboots): the eMMC on `mmc0` in 20 boots
+of 20; the new init told the eMMC and the card apart correctly in 10 boots of 10.
 
 ## Updating on the device
 
