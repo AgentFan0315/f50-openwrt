@@ -589,7 +589,21 @@ arm_linux() {  # the Linux slot's trial block, built from the misc block read at
     cp "$W/misc-bc-live.bin" "$_keep" 2>/dev/null || true
     die "$(t 'misc did not verify after writing, and the block it held before could not be written back: misc holds unknown bytes, and the device may not start Android. Do not reboot. Write the saved block back as root: {1}' "dd if=$_keep of=$MISC bs=1 seek=2048 conv=notrunc")"
 }
-pw_text() { printf 'MU300 Linux %s, %s\nuser: %s\npassword: %s\nDelete this file after the first login.\n' "$TAG" "$(date '+%Y-%m-%d %H:%M')" "$_users" "$PW"; }
+pw_text() {
+    printf 'MU300 Linux %s, %s\nuser: %s\npassword: %s\nDelete this file after the first login.\n' "$TAG" "$(date '+%Y-%m-%d %H:%M')" "$_users" "$PW"
+    # The other system, installed beside this one by an earlier zip, keeps its password: so does the file (its block
+    # from the file this one replaces), or the first zip's password would be lost with its output. Not after a
+    # wipe (HAVE_SYSTEMS is empty then), and never a block of this run's user.
+    case $OS in ubuntu) _ou=root _os=openwrt ;; *) _ou=ubuntu _os=ubuntu ;; esac
+    case " $HAVE_SYSTEMS " in *" $_os "*) ;; *) return 0 ;; esac
+    [ -f "$PW_FILE" ] && [ ! -L "$PW_FILE" ] || return 0
+    awk -v u="user: $_ou" '
+        /^MU300 Linux / { if (keep) printf "\n%s", b; b = ""; keep = 0 }
+        $0 == "" { next }
+        { b = b $0 "\n" }
+        $0 == u { keep = 1 }
+        END { if (keep) printf "\n%s", b }' "$PW_FILE"
+}
 # between quotes: a password of the conf file may hold blanks
 pw_show() { echo "  $(t 'password for {1}: "{2}"   (also in {3}; delete that file after the first login)' "$_users" "$PW" "$PW_FILE")"; }
 # Shown and saved before anything is written: android-install.sh puts the hash into the systems, and a run that fails
