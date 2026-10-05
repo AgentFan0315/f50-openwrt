@@ -78,7 +78,8 @@ Build (`openwrt/build-rootfs.sh`, inside the arm64 OpenWrt container):
    below); `image-version`; the tarball named after the system.
 
 `openwrt/luci-overlay/` holds what only the panel's system has: `uci-defaults/91-mu300-luci` (Aurora default,
-`ipv6 relay`, `pdptype IPV4V6`, LED switches), `init.d/mu300-smsd`, `init.d/mu300-atd-dash` (the dashboard's AT
+`ipv6 relay`, `pdptype IPV4V6`, LED switches, as first-install defaults behind the marker `luci.mu300.defaults`, which
+an update keeps with `/etc/config`; only the NDP relay deletes run on every boot that runs it), `init.d/mu300-smsd`, `init.d/mu300-atd-dash` (the dashboard's AT
 channels nr6/nr7), `init.d/mu300-ndp`, `opt/mu300/bin/{mu300-sms,mu300-smsd,ndp-learn}`,
 `lib/netifd/proto/mu300cell-v6.sh`, `www/.../view/system/leds.js`.
 
