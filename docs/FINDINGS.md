@@ -1780,6 +1780,23 @@ system still running (only rm's `--preserve-root` stopped it), and `apply`, `rol
 `<os>.old` while it was the running system (an apply or rollback without the reboot in between); all of them now
 check whether a directory is the running root (`[ / -ef dir ]`) first.
 
+### 32b. The Magisk installer on a device: an unmount that worked, and a password file with one system
+On the second F50 (Android on slot a, Magisk 30.6, an Ubuntu and an OpenWrt on the internal region), zips built
+from a local release of main: every run of the installer, a dry run included, stopped after unpacking with "could not
+unmount the Linux filesystem", nothing written. The read-only look at what is installed had mounted and read the
+filesystem; `android-mount-mu300root.sh -u` then failed, because Android's umount (toybox) frees the loop device of
+what it unmounts and the `losetup -d` after it ends in "No such device or address". The computer installers,
+uninstall and reset-password never look at `-u`'s status; the Magisk installer does. The helper now detaches only a
+loop that is still attached.
+
+With that fixed, the OpenWrt 6.18 zip (with `MU300_MODE=wipe` in `/data/adb/mu300-install.conf`: a fresh region)
+installed in 32 s and booted (`/run/mu300/linux-slot` b, boot-ok counted); the wipe line became a comment. The
+Ubuntu 24.04 5.4 zip then installed beside it in 36 s as an update, OpenWrt untouched (its LAN setting kept), and
+`mu300-os` switched between them. But its password file replaced the first one: the OpenWrt root password, still
+the one in use, was then nowhere on the device. The file now keeps the other system's entry while that system stays
+on the filesystem (not after a wipe); on the device, OpenWrt and then Ubuntu again left a file with both, and the
+OpenWrt shadow hash matched the password in it.
+
 ## ZTE U30 Air
 
 ### 33. The same board with a battery
