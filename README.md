@@ -437,15 +437,20 @@ sudo wifi-client forget                  # delete the saved network
   mode, joined as WPA2), and `connect` refuses them as soon as it sees one: this Wi-Fi driver has no SAE. Set the
   router to WPA2/WPA3 mixed mode to join it. (A driver that has SAE is used with it.)
 * **Sharing, and what it does not share**: USB clients reach the internet through the network, and only the
-  internet: its own devices and router (private, link-local and CGNAT addresses, and its subnet) are not reachable
-  from the LAN, so a guest on the device's USB does not end up on your home or hotel network. From that network
-  only ping and answers come in: SSH and the device's other services are closed to it, as they are to the modem
-  (use USB to reach the device). These rules are up before the radio joins and go, in one step, when it leaves or
-  a join fails or is interrupted; forwarding is turned off again then unless mobile data is sharing. A network
-  on the LAN's own subnet is refused. Ubuntu: nftables tables `ip mu300_wifi_nat` and `inet mu300_wifi_filter`.
-  (A `LAN_CIDRS` entry in vpn.conf does not open the other network to LAN clients either.) OpenWrt: `wlan0` joins the `wan` firewall zone, plus a rule
-  (`mu300-wifi-client-private`) for the private addresses. With the [VPN](#vpn) on, clients still go through the
-  tunnel, and its kill switch covers `wlan0` as it does the modem.
+  internet: its own devices and router (private, link-local, CGNAT, multicast and other special-purpose addresses,
+  and its subnet) are not reachable from the LAN, nor anything over IPv6, so a guest on the device's USB does not
+  end up on your home or hotel network. From that network only ping, DHCP, IPv6 neighbour discovery and answers
+  come in: SSH and the device's other services are closed to it, as they are to the modem (use USB to reach the
+  device). The firewall is up, closed, before the radio joins; sharing starts only once DHCP has answered and the
+  address is checked (a network on the LAN's own subnet is refused). A lost link closes the sharing again and drops
+  the address (mobile data takes over); when the link comes back, DHCP is asked again and the new address checked
+  before anything is shared. Leaving (`disconnect`, `forget`, a failed or interrupted join) removes everything in
+  one step, and only once the radio is off the network: a supplicant that will not stop keeps the firewall closed.
+  Forwarding is turned off again then unless mobile data is sharing. nftables tables `ip mu300_wifi_nat` (Ubuntu)
+  and `inet mu300_wifi_filter`; on OpenWrt `wlan0` also joins the `wan` firewall zone (fw4 does the NAT), with a
+  rule (`mu300-wifi-client-private`) for the private addresses. (A `LAN_CIDRS` entry in vpn.conf does not open the
+  other network to LAN clients either.) With the [VPN](#vpn) on, clients still go through the tunnel, and its kill
+  switch covers `wlan0` as it does the modem; these tables never let anything past it.
 * Names are shown as the network sends them when they are printable UTF-8; control characters, terminal escape
   sequences, invisible and bidirectional characters, bytes that are not UTF-8 and a backslash itself are shown
   as `\xNN`. Such a
