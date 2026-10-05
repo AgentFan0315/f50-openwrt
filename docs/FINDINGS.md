@@ -1680,6 +1680,15 @@ on the card, the earlier installation still in the internal region.
   in the Mali driver's probe, long after the card was mounted, so it does not look like the card. It may be a hang
   in the Mali driver under 6.18, or the power may have dropped at that moment (the board has no battery, and its
   cable was found to need replugging later the same night). Which of the two is open.
+  It came back on 2026-10-05 with 6.18.55 #7 (the IPA thread fix of 31e), on a soft reboot from the card after
+  eight good boots of that kernel on F50 #1 (four from the card, two of the internal system, two after arming from
+  Android): the board did not enumerate (the dock port showed "connect" and never "enable"), and a power cycle of
+  that port (which does not cut the board's power on this dock) did not bring it back. About 20 minutes later it
+  was in Android on its own: LK found slot b at `tries_remaining 1` (armed at 6), so five boots had not reached the
+  system's 30 s mark. The last of them (`console-ramoops`) had found the card (`stage=sd-root` at 5.06 s), switched
+  to OpenWrt at 5.12 s and ends at 7.19 s ("random: crng init done", while procd loads the modules), with no panic
+  or oops; `dmesg-ramoops` was an old one. Armed again from Android, it booted from the card at once. So the hang is
+  not the card and not new, but it can repeat on consecutive boots; what it is stays open.
 - **Uninstall.** Internal kept, card erased: `erased (/dev/block/mmcblk1p1)`, the internal `root-on-sd` marker
   removed, the internal systems intact; `install.sh --check` then reported `existing mu300sd filesystem: no`.
 - **Without the card.** Simulated by relabelling the card's filesystem away from `mu300sd` on F50 #1 (2026-10-05,
@@ -2019,7 +2028,8 @@ point of view; what came out of it, measured on 2026-10-05:
   (the green channel) on 5G, red without service; Wi-Fi `keyboard-backlight` 48. Every state was driven and read
   back on both F50s; on F50 #1 (OpenWrt) the hotspot switched off and on the way LuCI does it
   (`uci set wireless.ap0.disabled=1; uci commit; reload_config`) gave 48, 0, 48 (`mu300-led wifi sync` from a
-  procd reload trigger on `wireless`).
+  procd reload trigger on `wireless`, which follows wlan0 for two minutes: turned off and on again at once, hostapd
+  took 63 s to report AP-ENABLED, and the LED followed within a second).
 * **mu300-update.** It already skipped systems at the release's version (`ubuntu: already v2026.10.08`); a
   rollback's `ubuntu.broken` (655 MB) stayed on the disk through every update. `apply` now removes stale
   `<os>.broken` copies, never the running root, before counting free space: used space 2.8 G before, 2.2 G after.
