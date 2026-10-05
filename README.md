@@ -347,6 +347,10 @@ tell them apart.
 **No internet.** Check that the SIM has a data plan, then run `sudo mobile-data status`. A missing plan looks like a
 connection that keeps dropping.
 
+**Kernel warnings are not in `journalctl -k`.** On Ubuntu they are in `journalctl -t kernel` (warnings and errors
+only, from the start of each boot, with the kernel's own timestamps; repeating vendor chatter is left out, see
+`/etc/mu300/kmsg-ignore`). Everything else is in `dmesg`.
+
 **Websites think you are in another country.** The device has no GPS, so sites guess from the IP address; mobile
 operators and VPN servers often look like a different city.
 
