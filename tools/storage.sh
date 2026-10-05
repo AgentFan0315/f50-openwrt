@@ -1,9 +1,16 @@
 # Where the Linux filesystem goes: the free eMMC region or the SD card. Sourced by install.sh, uninstall.sh and
 # tools/reset-password.sh (su_do, ask, t, die and gib are theirs).
+#   region_probe     last_end / disk (sectors) and OFF / SIZE (bytes) of the free eMMC region; 1 when the device
+#                    gave no answer
+#   region_find_existing  existing=yes|no; an installed mu300root defines OFF / SIZE
+#   region_dirty     DIRTY, how many of 16 samples across the region hold data
 #   sd_probe         SD_DEV / SD_BYTES of the card in the slot (empty without one), SD_SMALL=1 when it is too small
 #   sd_existing      yes when the card already holds a mu300sd filesystem, foreign for any other ext4, else no
-#   choose_storage   SD_MODE=0|1; MU300_STORAGE=internal|sd answers without asking
+#   choose_storage   SD_MODE=0|1; MU300_STORAGE=internal|sd answers without asking (internal while the card
+#                    holds mu300sd still needs the typed word: that card would boot instead)
+#   sd_kernel_ok     a card installation refuses a kernel bundle that cannot read the card
 #   sd_erase         uninstall.sh: overwrite the start of the card's mu300sd filesystem (nothing else, ever)
+#   write_install_env  install.sh: the text of mu300-install.env (install.ps1's InstallEnvText writes the same)
 
 SD_MIN=$((700 * 1024 * 1024))
 
@@ -29,22 +36,41 @@ sd_existing() {
 
 choose_storage() {
     SD_MODE=0
+    _ex=no; [ -z "$SD_DEV" ] || _ex=$(sd_existing)
     case ${MU300_STORAGE:-} in
-        internal) return 0 ;;
+        internal) internal_over_card "$_ex"; return 0 ;;
         sd) [ -n "$SD_DEV" ] || die "$(t 'MU300_STORAGE=sd, but there is no usable SD card in the device')"
             SD_MODE=1; sd_not_foreign; return 0 ;;
         '') ;;
         *) die "$(t 'MU300_STORAGE must be internal or sd')" ;;
     esac
     [ -n "$SD_DEV" ] || return 0
-    # too little room inside: the card is the way that needs no repartitioning
-    _d=internal; [ "$SIZE" -lt "$SD_MIN" ] && _d=sd
+    # too little room inside: the card is the way that needs no repartitioning; a card that holds an installation
+    # already: that is what the device starts, so it is what an update or reinstall is about
+    _d=internal; { [ "$SIZE" -lt "$SD_MIN" ] || [ "$_ex" = yes ]; } && _d=sd
     ask _st "$(t 'Where should the Linux filesystem go: internal storage or the SD card ({1}, {2})? (internal/sd)' "$SD_DEV" "$(gib "$SD_BYTES")")" $_d
     case $_st in
-        internal) ;;
+        internal) internal_over_card "$_ex" ;;
         sd) SD_MODE=1; sd_not_foreign ;;
         *) die "$(t 'invalid choice')" ;;
     esac
+}
+
+# boot/init starts a mu300sd card before anything on the eMMC, so an internal installation made while such a card
+# is in the slot never starts. Say so, and go on only when the user types the word.
+internal_over_card() {  # internal_over_card EXISTING   (sd_existing of the card in the slot)
+    [ "$1" = yes ] || return 0
+    echo "$(t 'The SD card ({1}) holds a Linux installation (mu300sd), and the device always starts that one first: an installation to internal storage does not start while this card is in the slot.' "$SD_DEV")"
+    echo "$(t 'Take the card out before the device restarts, or erase its installation first with the uninstaller.')"
+    ask _ok "$(t 'Type internal to install to internal storage anyway')" no
+    [ "$_ok" = internal ] || die "$(t 'cancelled')"
+}
+
+# A card installation needs a kernel that reads the card. The mainline bundles that do say so in ./features (older
+# ones gate the SD host off, FINDINGS 31j): with one of those the device would not find its card and land in Android.
+sd_kernel_ok() {  # sd_kernel_ok DIR: the unpacked bundle DIR is fine for this installation
+    [ "$SD_MODE" = 1 ] || return 0
+    grep -qx sdcard "$1/features" 2>/dev/null || return 1
 }
 
 # Another Linux filesystem on the card may be someone's data, and the device refuses to format it. Say so now,
@@ -89,4 +115,48 @@ sd_erase() {
     _o=$(su_do "$(sd_erase_cmd "$SD_DEV")")
     case $_o in *ERASED*) ;; *) die "the SD card was not erased: $_o" ;; esac
     [ "$(sd_existing)" = no ] || die "the SD card still shows a mu300sd filesystem"
+}
+
+# mu300-install.env, what android-install.sh is told. OFF/SIZE (and their sectors) are always the internal region:
+# in SD mode SIZE is the card's by now and INT_SIZE keeps the region's, which the root-on-sd marker needs; the card's
+# own size is read on the device.
+write_install_env() {
+    _rs=$SIZE; [ "$SD_MODE" = 1 ] && _rs=$INT_SIZE
+    printf 'OFF=%s\nSIZE=%s\nOFF_S=%s\nSIZE_S=%s\nFORMAT=%s\nOSES="%s"\nWIPE_LEGACY=%s\nUPDATE=%s\nBOOT_OS=%s\nDEFAULT_LINUX=%s\nBOOT_ATTEMPTS=%s\nIMPORT_HOTSPOT=%s\nKERNEL=%s\nSD_MODE=%s\nSD_DEV=%s\nINTERNAL_EXISTS=%s\nPWHASH='"'"'%s'"'"'\n' \
+      "$OFF" "$_rs" "$((OFF / 512))" "$((_rs / 512))" "$FORMAT" "$OSES" "$WIPE_LEGACY" "$UPDATE" "$BOOT_OS" "$DEFAULT_LINUX" "$BOOT_ATTEMPTS" "$IMPORT_HOTSPOT" "$KERNEL" "$SD_MODE" "$SD_DEV" "$INTERNAL_EXISTS" "$PWHASH"
+}
+
+# The free eMMC region: from the first 2 MiB boundary after the last partition to the last one before the backup
+# GPT. Byte counts are computed here, never in the device's shell (Android's mksh has 32-bit arithmetic).
+region_probe() {
+    set -- $(su_do 'e=0; for p in /sys/block/mmcblk0/mmcblk0p*; do x=$(( $(cat $p/start) + $(cat $p/size) )); [ $x -gt $e ] && e=$x; done; echo $e $(cat /sys/block/mmcblk0/size)')
+    [ $# -eq 2 ] || return 1
+    last_end=$1; disk=$2
+    start=$(( (last_end / 4096 + 1) * 4096 ))
+    end=$(( ((disk - 34) / 4096 - 1) * 4096 ))
+    OFF=$((start * 512)); SIZE=$(( (end - start) * 512 ))
+}
+
+# an existing installation defines the region (it may have been created with a slightly different size, or at the
+# fixed offset of the first releases)
+region_find_existing() {
+    existing=no
+    for cand in $OFF 27762098176; do
+        m=$(su_do "dd if=/dev/block/mmcblk0 bs=1 skip=$((cand + 1080)) count=2 2>/dev/null | od -An -tx1" | tr -d ' ')
+        l=$(su_do "dd if=/dev/block/mmcblk0 bs=1 skip=$((cand + 1144)) count=16 2>/dev/null" | LC_ALL=C tr -d '\000')
+        if [ "$m" = 53ef ] && [ "$l" = mu300root ]; then
+            blocks=$(su_do "dd if=/dev/block/mmcblk0 bs=1 skip=$((cand + 1028)) count=4 2>/dev/null | od -An -tu4" | tr -d ' ')
+            OFF=$cand; SIZE=$((blocks * 4096)); existing=yes; return 0
+        fi
+    done
+}
+
+# unpartitioned space should be unused: sample 16 x 1 MiB across the region and count those with data. Empty is
+# 0x00 or 0xFF: an eMMC reads back what its erase leaves (EXT_CSD ERASED_MEM_CONT), and on some F50s that is 0xFF -
+# counted as data, a region that was never written stopped the install with "not empty".
+region_dirty() {
+    step=$(( SIZE / 1048576 / 16 ))
+    probe=""; i=0
+    while [ $i -lt 16 ]; do probe="$probe $(( OFF / 1048576 + i * step ))"; i=$((i + 1)); done
+    DIRTY=$(su_do "n=0; for s in $probe; do c=\$(dd if=/dev/block/mmcblk0 bs=1048576 skip=\$s count=1 2>/dev/null | tr -d \"\\000\\377\" | wc -c); [ \$c -gt 0 ] && n=\$((n + 1)); done; echo \$n")
 }

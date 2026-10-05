@@ -428,13 +428,17 @@ if ($parts.Count -ne 2) { Die (T 'could not read the partition table from the de
 [int64]$SIZE = ($end - $start) * 512
 function Gib([int64]$b) { '{0:N1} GiB' -f ($b / 1GB) }
 # Where the Linux filesystem goes (tools/storage.sh's choose_storage). The caller asks; an empty answer is the
-# default: internal storage, the card when there is too little room inside (the way that needs no repartitioning).
-function ChooseStorage([string]$SdDev, [int64]$SdBytes, [int64]$InternalBytes, [string]$Forced, [string]$Answer) {
+# default (StorageDefault): internal storage; the card when there is too little room inside (the way that needs no
+# repartitioning) or when it holds an installation already (that is what the device starts).
+function StorageDefault([int64]$InternalBytes, [string]$SdState) {
+    if ($InternalBytes -lt 700MB -or $SdState -eq 'yes') { return 'sd' } else { return 'internal' }
+}
+function ChooseStorage([string]$SdDev, [int64]$SdBytes, [int64]$InternalBytes, [string]$Forced, [string]$Answer, [string]$SdState) {
     if ($Forced -eq 'internal') { return 'internal' }
     if ($Forced -eq 'sd') { if (-not $SdDev) { throw 'MU300_STORAGE=sd, but there is no usable SD card in the device' }; return 'sd' }
     if ($Forced) { throw 'MU300_STORAGE must be internal or sd' }
     if (-not $SdDev) { return 'internal' }
-    if (-not $Answer) { if ($InternalBytes -lt 700MB) { return 'sd' } else { return 'internal' } }
+    if (-not $Answer) { return (StorageDefault $InternalBytes $SdState) }
     if ($Answer -eq 'internal' -or $Answer -eq 'sd') { return $Answer }
     throw 'invalid choice'
 }
@@ -449,12 +453,35 @@ function ChooseOpenWrt([string[]]$Oses, [string]$Preset, [string]$Which) {
     if ($Which -eq '2') { return @($Oses | ForEach-Object { if ($_ -eq 'openwrt') { 'openwrt-luci' } else { $_ } }) }
     return @($Oses)
 }
+# boot/init starts a mu300sd card before anything on the eMMC: an internal installation made while such a card is
+# in the slot never starts, so that choice needs the typed word (storage.sh's internal_over_card)
+function InternalOverCard([string]$Where, [string]$SdState) { return ($Where -eq 'internal' -and $SdState -eq 'yes') }
 # What the card holds, from the ext4 magic and label of its superblock: yes for a mu300sd filesystem, foreign for
 # any other ext4, labelled or not (someone's data: android-install.sh refuses to format it), no for anything else
 function SdState([string]$Magic, [string]$Label) {
     if ($Magic -ne '53ef') { return 'no' }
     if ($Label.Trim() -eq 'mu300sd') { return 'yes' }
     return 'foreign'
+}
+# A card installation needs a kernel that reads the card (tools/storage.sh's sd_kernel_ok): the mainline bundles
+# that do say so in ./features; older ones gate the SD host off and the device would never find its card.
+function SdKernelOk([int]$SdMode, [string]$Dir) {
+    if ($SdMode -ne 1) { return $true }
+    $f = Join-Path $Dir 'features'
+    return [bool]((Test-Path $f) -and (@(Get-Content $f) -contains 'sdcard'))
+}
+# mu300-install.env, what android-install.sh is told (tools/storage.sh's write_install_env writes the same text).
+# OFF/SIZE and their sectors are always the internal region: in SD mode SIZE is the card's by now and INT_SIZE keeps
+# the region's, which the root-on-sd marker needs; the card's own size is read on the device.
+function InstallEnvText($v) {
+    [int64]$rs = if ([int]$v.SD_MODE -eq 1) { $v.INT_SIZE } else { $v.SIZE }
+    [int64]$off = $v.OFF
+    $lines = @("OFF=$off", "SIZE=$rs", "OFF_S=$([math]::Floor($off / 512))", "SIZE_S=$([math]::Floor($rs / 512))",
+        "FORMAT=$($v.FORMAT)", "OSES=`"$(@($v.OSES) -join ' ')`"", "WIPE_LEGACY=$($v.WIPE_LEGACY)", "UPDATE=$($v.UPDATE)",
+        "BOOT_OS=$($v.BOOT_OS)", "DEFAULT_LINUX=$($v.DEFAULT_LINUX)", "BOOT_ATTEMPTS=$($v.BOOT_ATTEMPTS)",
+        "IMPORT_HOTSPOT=$($v.IMPORT_HOTSPOT)", "KERNEL=$($v.KERNEL)", "SD_MODE=$($v.SD_MODE)", "SD_DEV=$($v.SD_DEV)",
+        "INTERNAL_EXISTS=$($v.INTERNAL_EXISTS)", "PWHASH='$($v.PWHASH)'")
+    return (($lines -join "`n") + "`n")
 }
 function SdExisting {
     $m = (SuDo "dd if=$SD_DEV bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1") -replace '\s', ''
@@ -483,17 +510,22 @@ if ($Check) {
     }
 } else {
     $ans = ''
+    if ($SD_DEV) { $sdEx = SdExisting }
     if ($SD_DEV -and -not $env:MU300_STORAGE) {
-        $def = if ($SIZE -lt 700MB) { 'sd' } else { 'internal' }
-        $ans = Ask (T 'Where should the Linux filesystem go: internal storage or the SD card ({1}, {2})? (internal/sd)' $SD_DEV (Gib $SD_BYTES)) $def
+        $ans = Ask (T 'Where should the Linux filesystem go: internal storage or the SD card ({1}, {2})? (internal/sd)' $SD_DEV (Gib $SD_BYTES)) (StorageDefault $SIZE $sdEx)
     }
-    try { $where = ChooseStorage $SD_DEV $SD_BYTES $SIZE ([string]$env:MU300_STORAGE) $ans }
+    try { $where = ChooseStorage $SD_DEV $SD_BYTES $SIZE ([string]$env:MU300_STORAGE) $ans $sdEx }
     catch { Die (T $_.Exception.Message) }
+    if (InternalOverCard $where $sdEx) {
+        Write-Host (T 'The SD card ({1}) holds a Linux installation (mu300sd), and the device always starts that one first: an installation to internal storage does not start while this card is in the slot.' $SD_DEV)
+        Write-Host (T 'Take the card out before the device restarts, or erase its installation first with the uninstaller.')
+        if ((Ask (T 'Type internal to install to internal storage anyway') 'no') -ne 'internal') { Die (T 'cancelled') }
+    }
     if ($where -eq 'sd') {
         $SD_MODE = 1
         # Another Linux filesystem on the card may be someone's data, and the device refuses to format it. Say so
         # now, not after the password, the download and the build.
-        if ((SdExisting) -eq 'foreign') {
+        if ($sdEx -eq 'foreign') {
             Die ((T 'the SD card ({1}) holds another Linux (ext4) filesystem, and the installer never formats one that is not its own (mu300sd).' $SD_DEV) + "`n" + (T 'Copy off what you need and format the card elsewhere, use another card, or install to internal storage (MU300_STORAGE=internal).'))
         }
     }
@@ -639,6 +671,11 @@ if ($DEFAULT_LINUX -eq 1) {
 }
 $IMPORT_HOTSPOT = if ((Ask (T "Copy Android's hotspot name and password to Linux? (yes/no)") 'yes') -eq 'yes') { 1 } else { 0 }
 $gpu = Ask (T 'Include the Mali GPU (OpenCL) userspace (~90 MiB)? (yes/no)') 'yes'
+# the VPN engines are not part of the systems: an extra that goes onto the Linux partition only when wanted
+Write-Host ('  ' + (T 'The VPN (mu300-vpn) needs the vpn extra: Xray and sing-box. It can also be added later on the device:'))
+Write-Host '    sudo mu300-extra install vpn'
+$vx = Ask (T 'Install the VPN extra (about 40 MB more to download, 120 MB on the device)? (yes/no)') 'no'
+$EXTRA_VPN = $null
 $KERNEL = $null
 Say (T 'Which kernel?')
 Write-Host ('  ' + (T "1) 5.4   Unisoc's vendor kernel (Android 12 base): the longest tested, everything this project supports"))
@@ -737,6 +774,11 @@ foreach ($line in Get-Content "$REL\SHA256SUMS") {
 }
 $files = @('mu300-kernel.tar.gz') + ($OSES | ForEach-Object { RootfsFile $_ })
 if ($KERNEL -ne '5.4') { $files += "mu300-kernel-$KERNEL.tar.gz" }
+if ($vx -eq 'yes') {
+    # from the same release and SHA256SUMS; a release from before extras still has the engines in its images
+    if ($sums.ContainsKey('mu300-extra-vpn.tar.gz')) { $files += 'mu300-extra-vpn.tar.gz'; $EXTRA_VPN = "$REL\mu300-extra-vpn.tar.gz" }
+    else { Write-Host ('  ' + (T 'release {1} has no vpn extra: its systems still carry the VPN engines' $Release)) }
+}
 foreach ($f in $files) {
     if (-not $sums.ContainsKey($f)) {
         $why = if ($KERNEL -ne '5.4' -and $f -eq "mu300-kernel-$KERNEL.tar.gz") { ' ' + (T '(choose kernel 5.4, or a newer release)') } else { '' }
@@ -767,6 +809,9 @@ if ($KERNEL -ne '5.4') {
     # a bundle names the devices it runs on; older mainline kernels do not bring up the U30 Air's USB (FINDINGS 33c)
     if ($DEVICE -ne 'f50' -and -not ((Test-Path "$KMAIN\devices") -and ((Get-Content "$KMAIN\devices") -match "\b$DEVICE\b"))) {
         Die (T 'release {1} does not support this device yet; use a newer one' $Release)
+    }
+    if (-not (SdKernelOk $SD_MODE $KMAIN)) {
+        Die (T 'the {1} kernel of release {2} cannot read the SD card: choose kernel 5.4, a newer release, or internal storage (MU300_STORAGE=internal)' $KERNEL $Release)
     }
 }
 
@@ -804,6 +849,7 @@ Write-Host ('  ' + (T 'source:         {1}' (T 'prebuilt release {1} + vendor fi
 $sysText = ($OSES -join ' ') + $(if ($OSES -contains 'ubuntu') { " (Ubuntu $UBUNTU)" } else { '' })
 Write-Host ('  ' + (T 'systems:        {1} (boots: {2})' $sysText $BOOT_OS))
 Write-Host ('  ' + (T 'kernel:         {1}' "$KERNEL$(if ($KMAIN) { " (mainline, $((Get-Content "$KMAIN\kernel.release").Trim()))" })"))
+Write-Host ('  ' + (T 'extras:         {1}' $(if ($EXTRA_VPN) { 'vpn' } else { T 'none' })))
 Write-Host ('  ' + (T 'default boot:   {1}' $(if ($DEFAULT_LINUX -eq 1) { T 'Linux (Android after {1} failed boots in a row)' $BOOT_ATTEMPTS } else { T 'Android, Linux on demand' })))
 $fsText = if ($FORMAT -eq 0) { T 'keep existing' } elseif ($SD_MODE -eq 1) { T 'CREATE new ext4 (erases the SD card)' } else { T 'CREATE new ext4 (erases the Linux region)' }
 Write-Host ('  ' + (T 'filesystem:     {1}' $fsText))
@@ -821,13 +867,13 @@ foreach ($os in $OSES) {
     & adb push "$REL\$(RootfsFile $os)" "$T/mu300-$os.tar.gz" | Out-Null
     & adb push "$Work\mu300-vendor-$os.tar.gz" "$T/mu300-vendor-$os.tar.gz" | Out-Null
 }
+# android-install.sh puts every pushed mu300-extra-<name>.tar.gz onto the Linux partition (extra/<name>)
+if ($EXTRA_VPN) { & adb push $EXTRA_VPN "$T/mu300-extra-vpn.tar.gz" | Out-Null }
 $envFile = "$Work\mu300-install.env"
-# SIZE is always the internal region's (the card's own size is read on the device)
-$regionSize = if ($SD_MODE -eq 1) { $INT_SIZE } else { $SIZE }
-$lines = @("OFF=$OFF", "SIZE=$regionSize", "OFF_S=$($OFF / 512)", "SIZE_S=$($regionSize / 512)", "FORMAT=$FORMAT",
-    "OSES=`"$($OSES -join ' ')`"", "WIPE_LEGACY=$WIPE_LEGACY", "UPDATE=$UPDATE", "BOOT_OS=$BOOT_OS", "DEFAULT_LINUX=$DEFAULT_LINUX", "BOOT_ATTEMPTS=$BOOT_ATTEMPTS",
-    "IMPORT_HOTSPOT=$IMPORT_HOTSPOT", "KERNEL=$KERNEL", "SD_MODE=$SD_MODE", "SD_DEV=$SD_DEV", "INTERNAL_EXISTS=$INTERNAL_EXISTS", "PWHASH='$PWHASH'")
-WriteUnix $envFile (($lines -join "`n") + "`n")
+WriteUnix $envFile (InstallEnvText @{ OFF = $OFF; SIZE = $SIZE; INT_SIZE = $INT_SIZE; FORMAT = $FORMAT; OSES = $OSES
+    WIPE_LEGACY = $WIPE_LEGACY; UPDATE = $UPDATE; BOOT_OS = $BOOT_OS; DEFAULT_LINUX = $DEFAULT_LINUX
+    BOOT_ATTEMPTS = $BOOT_ATTEMPTS; IMPORT_HOTSPOT = $IMPORT_HOTSPOT; KERNEL = $KERNEL; SD_MODE = $SD_MODE
+    SD_DEV = $SD_DEV; INTERNAL_EXISTS = $INTERNAL_EXISTS; PWHASH = $PWHASH })
 & adb push $envFile "$T/mu300-install.env" | Out-Null
 Remove-Item $envFile
 $log = SuDo "sh $T/android-install.sh"

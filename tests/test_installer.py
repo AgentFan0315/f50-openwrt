@@ -1,6 +1,7 @@
 """tools/linux-mode.sh: which adb device install.sh and uninstall.sh work on. With a phone or tablet attached next to
 the device the installer must ask, never pick one by itself."""
 import re
+import struct
 import unittest
 
 from helpers import TOP, ShellTest
@@ -164,6 +165,157 @@ class Storage(ShellTest):
             self.assertIn('DIE', self.run_choose(shell, card, label='', answer='sd'))   # unlabelled ext4 too
 
 
+    def test_card_with_an_installation_is_the_default(self):
+        # init starts a mu300sd card before anything internal: internal storage is not the safe answer then
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
+        for shell in self.each_shell():
+            out = self.run_choose(shell, card, label='mu300sd')
+            self.assertIn('ASKED[sd]', out)
+            self.assertIn('mode=1 dev=/dev/block/mmcblk1p1', out)
+            self.assertNotIn('starts that one first', out)
+
+    def test_internal_with_an_installed_card_warns_and_needs_a_confirmation(self):
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
+        for shell in self.each_shell():
+            for kw in ({'answer': 'internal\ninternal'}, {'forced': 'internal', 'answer': 'internal'}):
+                out = self.run_choose(shell, card, label='mu300sd', **kw)
+                self.assertIn('starts that one first', out, kw)
+                self.assertIn('uninstall', out, kw)
+                self.assertIn('ASKED[no]', out, kw)
+                self.assertIn('mode=0', out, kw)
+            for kw in ({'answer': 'internal\n'}, {'forced': 'internal', 'answer': 'yes'}):
+                out = self.run_choose(shell, card, label='mu300sd', **kw)
+                self.assertIn('starts that one first', out, kw)
+                self.assertIn('DIE', out, kw)
+                self.assertNotIn('mode=', out, kw)
+
+    def test_internal_with_a_card_without_installation_asks_nothing_more(self):
+        card = ('/dev/block/mmcblk1', 62 * 2 ** 21, True, 'SD')
+        for shell in self.each_shell():
+            for label in (None, 'data'):
+                (self.tmp / 'label').unlink(missing_ok=True)
+                for kw in ({'answer': 'internal'}, {'forced': 'internal'}):
+                    out = self.run_choose(shell, card, label=label, **kw)
+                    self.assertNotIn('starts that one first', out)
+                    self.assertNotIn('ASKED[no]', out)
+                    self.assertIn('mode=0', out)
+
+    def test_sd_kernel_ok(self):
+        # a mainline bundle without ./features: sdcard has the SD host gated off, and a card install with it would
+        # never find its card (it lands in Android)
+        k = self.tmp / 'kmain'
+        k.mkdir()
+        for shell in self.each_shell():
+            for features, sd_mode, want in ((None, 1, 1), ('sdcard\n', 1, 0), ('other\n', 1, 1),
+                                            (None, 0, 0), ('sdcard\n', 0, 0)):
+                (k / 'features').unlink(missing_ok=True)
+                if features is not None:
+                    (k / 'features').write_text(features)
+                r = self.sh(shell, f'. "{TOP}/tools/storage.sh"; SD_MODE={sd_mode}; sd_kernel_ok "{k}"; echo "rc=$?"')
+                self.assertEqual(f'rc={want}', r.stdout.strip(), (features, sd_mode))
+
+    def test_installer_refuses_a_card_install_with_a_kernel_that_cannot_read_it(self):
+        src = (TOP / 'install.sh').read_text()
+        unpack = src.index('tar -xzf "$REL/mu300-kernel-$KERNEL.tar.gz" -C "$KMAIN"')
+        check = src.index('sd_kernel_ok "$KMAIN" || die')
+        self.assertLess(unpack, check)
+        self.assertLess(check, src.index("say \"$(t 'Adding the vendor files from your device to the images')\""))
+
+
+class InstallEnv(ShellTest):
+    """mu300-install.env, what android-install.sh is told: tools/storage.sh's write_install_env (install.sh) and
+    install.ps1's InstallEnvText write the same text (tests/installer.Tests.ps1 compares the two)."""
+    COMMON = dict(OFF=27762098176, FORMAT=1, OSES='ubuntu openwrt', WIPE_LEGACY=0, UPDATE=0, BOOT_OS='openwrt',
+                  DEFAULT_LINUX=1, BOOT_ATTEMPTS=5, IMPORT_HOTSPOT=1, KERNEL='6.18', PWHASH='$6$salt$hash/x.y')
+
+    def write_env(self, shell, **v):
+        code = ''.join(f"{k}='{val}'; " for k, val in v.items())
+        r = self.sh(shell, code + f'. "{TOP}/tools/storage.sh"; write_install_env')
+        self.assertEqual('', r.stderr)
+        return r.stdout
+
+    @staticmethod
+    def parse(text):
+        return dict(line.split('=', 1) for line in text.splitlines())
+
+    def test_sd_mode_carries_the_card_and_the_internal_region(self):
+        # SIZE in SD mode is the card's; the file still gets the internal region (the marker goes there)
+        for shell in self.each_shell():
+            out = self.write_env(shell, **self.COMMON, SIZE=31914967040, INT_SIZE=34776023040, SD_MODE=1,
+                           SD_DEV='/dev/block/mmcblk1p1', INTERNAL_EXISTS=1)
+            e = self.parse(out)
+            self.assertEqual(e['SD_MODE'], '1')
+            self.assertEqual(e['SD_DEV'], '/dev/block/mmcblk1p1')
+            self.assertEqual(e['INTERNAL_EXISTS'], '1')
+            self.assertEqual((e['OFF'], e['SIZE']), ('27762098176', '34776023040'))
+            self.assertEqual((e['OFF_S'], e['SIZE_S']), ('54222848', '67921920'))
+            self.assertEqual((e['FORMAT'], e['UPDATE']), ('1', '0'))
+            self.assertEqual(e['OSES'], '"ubuntu openwrt"')
+            self.assertEqual(e['PWHASH'], "'$6$salt$hash/x.y'")
+            self.assertEqual(list(e), ['OFF', 'SIZE', 'OFF_S', 'SIZE_S', 'FORMAT', 'OSES', 'WIPE_LEGACY', 'UPDATE',
+                                       'BOOT_OS', 'DEFAULT_LINUX', 'BOOT_ATTEMPTS', 'IMPORT_HOTSPOT', 'KERNEL',
+                                       'SD_MODE', 'SD_DEV', 'INTERNAL_EXISTS', 'PWHASH'])
+
+    def test_internal_mode(self):
+        for shell in self.each_shell():
+            common = dict(self.COMMON, FORMAT=0, UPDATE=1)
+            out = self.write_env(shell, **common, SIZE=34776023040, INT_SIZE='', SD_MODE=0, SD_DEV='', INTERNAL_EXISTS=1)
+            e = self.parse(out)
+            self.assertEqual((e['SD_MODE'], e['SD_DEV'], e['INTERNAL_EXISTS']), ('0', '', '1'))
+            self.assertEqual((e['OFF'], e['SIZE'], e['OFF_S'], e['SIZE_S']),
+                             ('27762098176', '34776023040', '54222848', '67921920'))
+            self.assertEqual((e['FORMAT'], e['UPDATE']), ('0', '1'))
+
+    def test_installer_writes_the_env_file_with_it(self):
+        src = (TOP / 'install.sh').read_text()
+        self.assertIn('write_install_env > "$env"', src)
+        self.assertNotIn("printf 'OFF=", src)
+
+
+class ImportHotspot(ShellTest):
+    """tools/android-import-hotspot.sh writes into the installation that boots: the card's when it holds mu300sd
+    (found the way reset-password.sh finds it), the internal one otherwise; MU300_SD_DEV still names one by hand."""
+
+    def run_import(self, shell, card, label=None, **env):
+        (self.tmp / 'sd').write_text(card)
+        if label is not None:
+            (self.tmp / 'label').write_text(label)
+        else:
+            (self.tmp / 'label').unlink(missing_ok=True)
+        # adb shell "su -c '...'": the card probe and its superblock, then the import itself (recorded)
+        self.stub('adb', 'case "$2" in *"/sys/block/mmcblk[1-9]"*) cat "$STUBLOG/sd" ;; '
+                         '*skip=1080*) [ -e "$STUBLOG/label" ] && echo " 53 ef" ;; '
+                         '*skip=1144*) cat "$STUBLOG/label" 2>/dev/null ;; '
+                         '*WifiConfigStoreSoftAp*) printf %s "$2" > "$STUBLOG/import"; echo imported ;; esac')
+        (self.tmp / 'import').unlink(missing_ok=True)
+        r = self.script(shell, TOP / 'tools' / 'android-import-hotspot.sh', **env)
+        imp = (self.tmp / 'import').read_text() if (self.tmp / 'import').exists() else ''
+        return r, imp
+
+    def test_card_installation_is_found_by_itself(self):
+        for shell in self.each_shell():
+            r, imp = self.run_import(shell, '/dev/block/mmcblk1p1 62333952 SD\n', label='mu300sd')
+            self.assertEqual(0, r.returncode, r.stderr)
+            self.assertIn('MU300_SD_DEV=/dev/block/mmcblk1p1 sh /data/local/tmp/android-mount-mu300root.sh', imp)
+
+    def test_internal_without_an_installed_card(self):
+        for shell in self.each_shell():
+            for card, label in (('', None), ('/dev/block/mmcblk1p1 62333952 SD\n', None),
+                                ('/dev/block/mmcblk1p1 62333952 SD\n', 'data')):
+                r, imp = self.run_import(shell, card, label=label)
+                self.assertEqual(0, r.returncode, r.stderr)
+                self.assertIn('android-mount-mu300root.sh', imp)
+                self.assertNotIn('MU300_SD_DEV', imp, (card, label))
+
+    def test_named_card_still_wins_and_the_emmc_is_refused(self):
+        for shell in self.each_shell():
+            r, imp = self.run_import(shell, '', MU300_SD_DEV='/dev/block/mmcblk2p1')
+            self.assertIn('MU300_SD_DEV=/dev/block/mmcblk2p1 sh', imp)
+            r, imp = self.run_import(shell, '/dev/block/mmcblk1p1 62333952 SD\n', label='mu300sd',
+                                     MU300_SD_DEV='/dev/block/mmcblk0p1')
+            self.assertNotEqual(0, r.returncode)
+            self.assertEqual('', imp)
+
 class SdErase(ShellTest):
     """tools/storage.sh's sd_erase (uninstall.sh): the card is erased only when it holds mu300sd, never the eMMC.
 
@@ -311,8 +463,50 @@ class SdErase(ShellTest):
             self.assertNotIn("'", out); self.assertNotIn('"', out)
 
 
-if __name__ == '__main__':
-    unittest.main()
+class Region(ShellTest):
+    """storage.sh's region functions, with su_do running the device commands against a fake sysfs and eMMC file."""
+
+    def fake(self, ext4_at=None):
+        sysfs = self.tmp / 'sys/block/mmcblk0'
+        (sysfs / 'mmcblk0p1').mkdir(parents=True, exist_ok=True)
+        (sysfs / 'mmcblk0p1/start').write_text('2048\n')
+        (sysfs / 'mmcblk0p1/size').write_text(f'{4 << 21}\n')          # ends at 8 GiB + 1 MiB
+        (sysfs / 'size').write_text(f'{16 << 21}\n')                   # a 16 GiB eMMC
+        emmc = self.tmp / 'mmcblk0'
+        with open(emmc, 'wb') as f:
+            f.truncate(16 << 30)
+            if ext4_at is not None:
+                f.seek(ext4_at + 1024 + 4); f.write(struct.pack('<I', 1000))
+                f.seek(ext4_at + 1080); f.write(b'\x53\xef')
+                f.seek(ext4_at + 1144); f.write(b'mu300root')
+        return emmc
+
+    def run_region(self, shell, call):
+        su = (f'su_do() {{ sh -c "$(printf "%s" "$1" | sed -e "s|/sys/block|{self.tmp}/sys/block|g" '
+              f'-e "s|/dev/block/mmcblk0|{self.tmp}/mmcblk0|g")"; }}\n')
+        return self.sh(shell, su + f'. "{TOP}/tools/storage.sh"\n{call}\n'
+                       'echo "rc=$? OFF=$OFF SIZE=$SIZE existing=${existing:-} DIRTY=${DIRTY:-}"')
+
+    def test_probe(self):
+        self.fake()
+        for shell in self.each_shell():
+            out = self.run_region(shell, 'region_probe').stdout
+            start = ((2048 + (4 << 21)) // 4096 + 1) * 4096
+            end = (((16 << 21) - 34) // 4096 - 1) * 4096
+            self.assertIn(f'rc=0 OFF={start * 512} SIZE={(end - start) * 512}', out)
+
+    def test_existing_and_dirty(self):
+        start = ((2048 + (4 << 21)) // 4096 + 1) * 4096 * 512
+        emmc = self.fake(ext4_at=start)
+        for shell in self.each_shell():
+            out = self.run_region(shell, 'region_probe; region_find_existing').stdout
+            self.assertIn(f'OFF={start} SIZE={1000 * 4096} existing=yes', out)
+        self.fake()
+        with open(emmc, 'r+b') as f:
+            f.seek(start + (512 << 10)); f.write(b'data' * 1024)    # inside the first of the 16 sampled MiB
+        for shell in self.each_shell():
+            out = self.run_region(shell, 'region_probe; region_find_existing; region_dirty').stdout
+            self.assertIn('existing=no DIRTY=1', out)
 
 
 class ChooseSystems(ShellTest):
@@ -381,3 +575,7 @@ class ChooseSystems(ShellTest):
             self.assertIn('DIE invalid choice', self.run_choose(shell, 2, '7\n'), shell)
             self.assertIn('DIE that choice needs', self.run_choose(shell, 3, '2\n', size=2), shell)
             self.assertIn('OSES=openwrt-luci', self.run_choose(shell, 2, '2\n', size=1), shell)
+
+
+if __name__ == '__main__':
+    unittest.main()

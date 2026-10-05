@@ -80,11 +80,12 @@ python3 boot/build-boot-image.py --stock-boot dumps/boot_a.img --misc-head dumps
 3. Assemble and deploy:
 ```sh
 cid=$(docker create mu300-ubuntu:24.04); docker export $cid > rootfs/base.tar; docker rm $cid
-tools/fetch-xray.sh       # optional: xray + hev-socks5-tunnel, mu300-vpn's default engine (pinned, sha256-checked)
-tools/fetch-sing-box.sh   # optional: the sing-box engine for mu300-vpn (pinned release, sha256-checked)
+tools/make-extra.sh vpn mu300-extra-vpn.tar.gz   # optional: the VPN engines as the vpn extra, not part of the image
+                          # (xray, hev-socks5-tunnel, sing-box, pinned and sha256-checked; on the device:
+                          # sudo MU300_EXTRA_FILE=mu300-extra-vpn.tar.gz mu300-extra install vpn)
 docker run --rm -v "$PWD/rootfs":/w -v "$PWD/out/modules":/kmods:ro -v "$PWD/out":/kout:ro \
   -v "$PWD/firmware":/firmware:ro -v "$PWD/android-subset":/android-subset:ro -v "$PWD/tools/logdw/logdw":/logdw:ro \
-  -v "$PWD/tools/bt-init/mu300-bt-init":/bt-init:ro -v "$PWD/sing-box":/sing-box:ro -v "$PWD/xray":/xray:ro -v "$PWD/hev-socks5-tunnel":/hev-socks5-tunnel:ro mu300-ubuntu:24.04 bash /w/assemble.sh
+  -v "$PWD/tools/bt-init/mu300-bt-init":/bt-init:ro mu300-ubuntu:24.04 bash /w/assemble.sh
 ```
 Push `mu300-ubuntu-24.04-rootfs.tar.gz` to the device and extract it with `tools/android-mount-mu300root.sh`.
 `firmware/` holds `wcnmodem.bin`, `gnssmodem.bin` and `wifi_board_config*.ini` from the device's `/odm/firmware`, plus

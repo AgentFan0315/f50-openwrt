@@ -1569,6 +1569,11 @@ The stock device tree of the F50 (read from `/proc/device-tree/soc/ap-ahb` under
 The mainline port used to let only the `non-removable` host probe, so the F50 showed `mmc0` alone with a card in
 the slot. The gate now lets the eMMC and the `sdio_sd` host through; `sdio_wifi` stays unprobed (Wi-Fi is on PCIe).
 
+`/proc/device-tree/aliases` (read under 6.18.55) has no `mmc` entries at all, only cooling devices, `eth*`, `i2c*`,
+`serial*`, `spi*`, `v4-modem*` and a few others. The host numbers therefore come from the probe order, not from an
+alias: `mmc0` is `22200000.sdio` (the eMMC) and `mmc1` is `22210000.sdio` (the slot), under 6.18 and 5.4 alike.
+That the eMMC is `mmcblk0` is what init and the installers rely on when they look at `mmcblk[1-9]` for the card - which under mainline held only by luck (31l).
+
 Phandle 0x170 is `gpio@2000c0`, `sprd,qogirn6pro-eic-sync`. Mainline's `sprd-eic` binds it, but as a chip of 24
 lines (`gpiochip3: 24 GPIOs`), and the slot's card detect is line 35: the lookup fails, `mmc_of_parse()` returns
 `-EPROBE_DEFER` at about 2.09 s, and the host would stay deferred. `mmc_of_parse()` requests the CD GPIO before it
@@ -1594,7 +1599,9 @@ that build (the card ran at 50 MHz "high speed", every poll tried SDIO, SD and M
 - 5.4 (release v2026.09.30's kernel): `mmc0 mmc1 mmc2` (the vendor driver also probes `sdio_wifi`);
   `/dev/mmcblk1` and `/dev/mmcblk1p1`, type `SD`, 62333952 sectors. The vendor EIC driver gives the card detect
   ("Got CD GPIO"), and the card runs as "ultra high speed SDR104" after tuning, at 23.75 s (the vendor modules
-  load late).
+  load late). That time did not come back: on the card installation (31k, "Kernel 5.4") seven boots had
+  `mmcblk1` at 3.40 to 3.63 s, well before init looks for it. Init still allows a card under 5.4 up to 30 s
+  instead of 8 when it waits at all (a host that waits for its card-detect line instead of polling).
 
 - That build, card pulled at 392 s of uptime: "mmc1: card aaaa removed", `/dev/mmcblk1*` gone, and the log stayed
   at 5 `mmc1` lines from 419 s to 603 s.
@@ -1640,12 +1647,13 @@ on the card, the earlier installation still in the internal region.
 - **Update.** `mu300-update boot` with a 6.18 bundle that has no `./features` refused (`this kernel bundle cannot
   read the SD card, and this system runs from it; nothing was changed`, boot_b unchanged); with the `sdcard`
   bundle it installed the 31 modules into both systems and the device booted from the card again.
-- **Reboots.** A loop rebooted OpenWrt on the card 19 times. 17 came back on the card, each with the card found at
-  2.43 to 2.46 s ("new UHS-I speed SDR104"), 0 `mmc1` error, timeout or crc lines, and SSH 106 s after the `reboot`
-  (91 s of uptime). One hung (below). In one the cable was pulled and plugged back in while the board was starting.
-  None landed on the internal system. Three restarts from outside the loop (that replugged cable, and two reboots
-  meant for another board on the same address) also came up on the card, as did the five reboots of the steps
-  before the loop.
+- **Reboots.** A loop rebooted OpenWrt on the card 19 times; 18 came back on the card and 1 hung (the 10th, below):
+  1 failure in 19. Of the 18, 17 came up undisturbed, each with the card found at 2.43 to 2.46 s ("new UHS-I speed
+  SDR104"), 0 `mmc1` error, timeout or crc lines, and SSH 106 s after the `reboot` (91 s of uptime); in the 12th
+  the cable was pulled and plugged back in while the board was starting, and the cold boot after that came up on
+  the card as well. None landed on the internal system. Two restarts from outside the loop (reboots meant for
+  another board on the same address) also came up on the card, as did the five reboots of the steps before the
+  loop.
 - **One boot hung.** The 10th reboot stopped at 15.09 s of uptime: init had found the card (`stage=sd-root
   dev=/dev/mmcblk1p1` at 8.08 s), switched to OpenWrt at 8.13 s, procd had loaded `/etc/modules.d`, and the last
   line in `console-ramoops` is `mali 23140000.gpu: GPU identified as 0x1 arch 9.0.9 r0p1 status 0`. A good boot
@@ -1657,9 +1665,57 @@ on the card, the earlier installation still in the internal region.
   cable was found to need replugging later the same night). Which of the two is open.
 - **Uninstall.** Internal kept, card erased: `erased (/dev/block/mmcblk1p1)`, the internal `root-on-sd` marker
   removed, the internal systems intact; `install.sh --check` then reported `existing mu300sd filesystem: no`.
-- **Without the card.** Not measured yet (the fallback to the internal system after the 8 s wait, `stage=sd-root-missing`).
+- **Without the card.** Pending: card-pull fallback. Not measured on the device yet (it needs the card pulled by
+  hand): neither the fallback to the internal system after the wait (`stage=sd-root-missing`) nor the way to Android
+  without an internal system. What exists is the design and the unit tests of the root selection
+  (`tests/test_boot_init.py`, RootSelect).
+- **Kernel 5.4.** Release v2026.10.08's 5.4 bundle with this branch's init in its generic ramdisk and `sdcard` in
+  `./features`, installed on the card system with `mu300-update kernel 5.4` (2026-10-05): 7 boots, 2 with the init
+  from before the longer wait and 5 with the one that has it, all from the card (`/run/mu300-root-dev`
+  `/dev/mmcblk1p1`, OpenWrt). `mmcblk1` at 3.40 to 3.63 s and `p1` at 3.43 to 5.35 s; the
+  vendor modules done at 10.23 to 11.00 s and `stage=sd-root dev=/dev/mmcblk1p1` at 11.65 to 12.49 s, so init found
+  the card on its first look and never waited; 0 `mmc1` error, timeout or crc lines in the five boots counted. The
+  wait that now runs past 8 s while a card may still be coming was checked against the live 5.4 sysfs: a card that
+  is set up stops it (`sd_coming` 1), a 5.4 host with no card device yet keeps it going (0). Back on 6.18.55 with
+  the same init: 2 boots from the card, `mmcblk1` at 2.46 and 2.47 s, `stage=sd-root` at 8.05 and 8.12 s.
 - **U30 Air.** No SD host at all: `/sys/class/mmc_host` holds `mmc0` only, `/sys/block` only `mmcblk0*` (Android,
   stock kernel). `sd_probe` finds nothing, and the installers never ask.
+
+### 31l. The card slot took mmc0
+31j's "`mmc0` is the eMMC by probe order" does not hold under mainline. On F50 #1 (6.18.55, OpenWrt on the card,
+2026-10-05), boot 19 of a 20-boot soft-reboot loop came up with the card on `mmc0` (`mmc0: new UHS-I speed SDR104
+SDHC card`, `mmcblk0: mmc0:aaaa SL32G`) and the eMMC on `mmc1` (`stage=persist-target dev=/dev/mmcblk1p38`). init
+then looked for the card on `mmcblk[1-9]` (the eMMC, no `mu300sd`) and for the internal region on `/dev/mmcblk0`,
+the card: the first candidate offset lies past the card's end, `dd bs=1 skip=` cannot seek there and busybox reads
+its way instead, byte by byte. No stage line after `usb-bind-done` for 297 s, then `stage=timer-reboot` at 302 s;
+the next boot was normal. From outside it looked like a hang (no SSH for 6 minutes).
+
+Both sdhci-sprd hosts probe asynchronously (`PROBE_PREFER_ASYNCHRONOUS`) and the index is taken in
+`sdhci_pltfm_init()`, first come first served. In the other 19 boots of that loop the two hosts registered 0.05 to
+20 ms apart (the slot's first in one of them, already holding index 1). Before the polled card slot (31j) the slot's
+host deferred on its card-detect GPIO and always came second.
+
+* Kernel port (`upstream/port/install.py`): the card slot's host returns `-EPROBE_DEFER` until the eMMC's host is
+  added (checked before `sdhci_pltfm_init()`, which allocates the index). The slot registers about 0.28 s after the
+  eMMC now, the card is set up at about 2.75 s instead of 2.45 s and `stage=sd-root` comes at 5.10 to 5.16 s instead
+  of 5.04 to 5.07 s.
+* init and the Linux tools no longer rely on the number: init takes the eMMC as the `mmcblk` disk whose card type
+  is `MMC` and the card candidates from the `SD` disks, looks for the region only on the eMMC and never past its
+  end, and writes `<eMMC>@<offset>` to `/run/mu300-root-dev` (`mu300-update` takes any `@` there for internal);
+  early-recorder and android-vendor-start find the eMMC's partitions by name or type. (The Android-side tools run
+  on the stock kernel, where the eMMC is `mmcblk0`, and are unchanged.)
+* Every Linux-side lookup by GPT name - init's `misc` and `boot_<slot>` (the BCB, the persistent log,
+  `/run/mu300/misc-dev` for mu300-next-boot), early-recorder's log partition, `mu300-update`'s kernel partition and
+  the `by-name` links - looks only at the eMMC: the disk of type `MMC`, else the first `mmcblk` disk that is not `SD`,
+  never a card. A card can carry the same names (a raw clone of a device backup) and would otherwise be written to.
+* `ueventd-perms.sh` no longer touches block devices by number: Android's `mmcblk1p*` rule (the card, for vold,
+  `root:system`) is dropped - no vendor daemon run here opens the card, and gid 1000 is the first user on Linux -
+  and `mmcblk0rpmb` became `mmcblk*rpmb` (only the eMMC has an RPMB partition).
+* The cost of the kernel wait: if the eMMC's host never binds, the card slot's host stays deferred, so there is no
+  root on the card without a working eMMC host.
+
+Verification on F50 #1 (6.18.55 with the port, OpenWrt on the card, soft reboots): the eMMC on `mmc0` in 20 boots
+of 20; the new init told the eMMC and the card apart correctly in 10 boots of 10.
 
 ## Updating on the device
 
@@ -1907,3 +1963,64 @@ experiment, and `mu300-update` keeps that segment. 33e made init honour a guard 
 from Android with mu300-linux is exactly that. The generic ramdisk segment, which every update appends behind the
 device segment, now carries an empty `etc/mu300-trial-guard` (a later file replaces an earlier one), and an
 experiment's guard goes into a segment of its own behind the generic one.
+
+### 33i. A reboot "with the hotspot off" that never brought it back
+
+Reported: after rebooting from mu300-toolkit because the hotspot was on, SSH was gone. The toolkit's "join a
+network" offers exactly that reboot when the radio is the access point (this driver cannot turn an AP back into a
+station), and `wifi-client scan-mode on` left `/etc/mu300/wifi-scan-mode` in place until a network was joined: the
+hotspot stayed off at that boot and at every boot after, and whoever had come in over it had no way back but USB.
+The flag is now taken at boot into `/run` (mu300-wifi-scan-mode.service), for that boot only, a transient timer
+brings the hotspot back after 10 minutes when nothing was joined, and the toolkit says before the reboot that a
+session over the hotspot ends there and where to come back. Newer-release notes at login came in the same change.
+
+### 33j. Two devices restored from one backup
+
+A second F50 restored from the first one's backup came up with the same `androidboot.serialno` (the bootloader
+reads it from the restored data), so 33b's gadget identity was the same on both: the same USB serial number and
+the same host MAC. macOS gave the one network interface to whichever enumerated last, and the other had none.
+init now adds the eMMC's serial (`androidboot.emmcid`, which the bootloader passes on both boards; it is the
+product serial field of the eMMC's CID, hex characters 21-28): the USB serial number is
+`MU300LINUX-<serial>-<emmc serial>` and the MACs are `02:50:<md5 of both>:<subnet>:0x`. Not read from the CID in
+`/sys` when the argument is missing: init sets up USB before the modules that find the eMMC are loaded (and under
+mainline the eMMC may or may not be there yet), so the identity would change from boot to boot; without the argument
+it is the serial number alone, as before.
+
+Decided for every device, not only for clones (a device cannot tell it is one): after this update each computer sees
+a new network adapter once - macOS sets up a new interface by itself (measured on the U30 Air and an F50: an address
+45-48 s after the reboot), Windows installs the adapter again and may ask once more which kind of network it is on,
+and a computer that kept a setting for the old adapter (a fixed address, a firewall rule by MAC) has to be told about
+the new one.
+
+### 33k. Vendor driver fixes from the U30 Air test, measured
+
+Before and after on the U30 Air (the "before" being the kernels of the overnight test), per boot:
+
+| | before | after |
+|---|---|---|
+| reboots on 6.18.55 | 1 panic in 5: 855 `sipa_dele get pd fail ret = 1`, soft lockup in `cp_dele_on_commad`, a 68 s shutdown | 20 of 20 clean: no `get pd fail`, no lockup, no new pstore dump, shutdown 20-30 s, mobile data on every boot |
+| `cannot create duplicate filename` (sipc debug devices) | 12, with 13 call traces | 0 and 0; the four `/dev/sipc_*` once |
+| `br-lan: hw csum failure` (Wi-Fi RX) | 1 per boot | 0 over a boot and ten Wi-Fi joins of a phone |
+| IPv6 TCP from a Wi-Fi client to the device's link-local | never connected (the SYN was dropped for its firmware sum) | connects |
+| `to free list empty` / `out of time` | 302 / 46 in 5 minutes | 0 / 0 |
+| USB ping from a Mac, 100 at 100 ms (NCM) | 4.98 ms | 1.46 ms |
+
+Throughput did not move beyond its spread: phone -> device 537-555 vs 553-571 Mbit/s, device -> phone 424-474 vs
+410-453, Mac -> device over USB 337 vs 333, device -> Mac 268 vs 267, both ways at once 190/153 vs 215/148.
+
+* sipa_dele: `pm_runtime_get_sync()` returns 1 for a device already active; the vendor loop took it for a failure
+  and retried every millisecond for ever. A failure is now answered with `SMSG_VAL_DELE_REQ_FAIL`. What the CP does
+  with that answer to ENABLE is not known (the vendor never sent one), and the failure needs runtime PM switched off
+  under a suspended device, which these tests did not produce.
+* Wi-Fi RX: the firmware's sum is checked against the frame's pseudo-header and only a match is trusted
+  (CHECKSUM_UNNECESSARY); IPv4 options, IPv6 extension headers and a UDP length short of the IP payload are left to
+  the stack, since where the firmware starts its sum is not documented.
+* Wi-Fi PCIe post-init runs on every power-on of the chip (each hotspot start): 5 restarts, 5 post-inits. Its error
+  path, which used to leave the channel table NULL for the next power-on and the failed channel half set up, was
+  reviewed, not produced.
+* Rejected: the fork's reorder change (its timer was not pushed forward by out-of-order frames before either; the
+  change would let a new hole be skipped almost at once, and 20 ms is short for block-ack retries), its CHECKSUM_NONE
+  for every frame, and its latency probes.
+* Measuring Wi-Fi with an Android phone: flushing the phone's neighbour entry for its gateway made Android give up
+  the network and join another saved one; `cmd wifi set-network-selection-config enabled enabled -a 2` keeps it on
+  the network it is on while testing (and `-a 0` restores it).
