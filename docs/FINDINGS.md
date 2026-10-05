@@ -2094,8 +2094,13 @@ Air, ten `ifdown wan; ifup wan` gave the WAN back in
   mu300-update's `apply_one` with a newer image and a reboot kept all four, and `dhcp` had no NDP option. The device
   check covered those four (91-mu300-luci). The update now keeps the user's network settings too: 90-mu300 is split
   the same way (first-install defaults behind `system.mu300.defaults`; an install from before it is told by wan
-  proto `mu300cell`), so the LAN address and mask, `ip6assign`, the APN, hostname, time zone, br-lan's members and
-  flow offloading stay as the user set them (unit tests; not checked on a device).
+  proto `mu300cell`), so the LAN address and mask, `ip6assign`, the APN, hostname, time zone and br-lan's members
+  stay as the user set them; flow offloading too, except once on the first update of an install from before the
+  marker, which switches it on (`mu300-ttl` turns it off again at boot while a TTL is set). Checked on the U30 Air:
+  its openwrt-luci from before the marker, hostname changed to `u30test`, updated by `apply_one` with the new image:
+  after the reboot the hostname, LAN address and `ip6assign` 60 were kept, the marker was set, WAN and the Mac's
+  lease came up. Open: the pinned USB host entry keeps its address when the LAN moves to another subnet (a later
+  fix should re-derive it from the LAN).
 * **TTL and the flowtable (K28, R23)**: `mu300-ttl set 64` turned flow offloading off and the sipa_eth0 flowtable
   went (1 -> 0); `off` brought both back.
 * **The panel**: every page (Status, Network locks, SMS, AT terminal, Adapter settings, Device management) in a
