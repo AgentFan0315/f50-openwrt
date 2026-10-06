@@ -369,14 +369,17 @@ class Systems(ShellTest):
         files.update(extra or {})
         make_tar(self.T / f'mu300-{os}.tar.gz', files)
 
-    def run_install(self, shell, **env):
+    def run_install(self, shell, fails=False, **env):
         e = dict(OSES='openwrt-luci', UPDATE='0', PWHASH='', DEFAULT_LINUX='0', BOOT_OS='openwrt-luci', WIPE_LEGACY='0')
         e.update(env)
         # sd_unmark and extra_keep_vpn are other blocks of the script (SdCard and Extras test them)
         pre = ('set -e\nsay() { echo "[device] $*"; }\nsd_unmark() { :; }\nextra_keep_vpn() { :; }\nssid=; psk=\n'
                + f'T="{self.T}"; M="{self.M}"\n')
         r = self.sh(shell, pre + self.install, **e)
-        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        if fails:
+            self.assertNotEqual(r.returncode, 0, r.stderr + r.stdout)
+        else:
+            self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         return r
 
     def test_installs_openwrt_luci(self):
@@ -397,8 +400,107 @@ class Systems(ShellTest):
             old.mkdir(parents=True, exist_ok=True)
             (old / 'network').write_text('mine\n')
             self.tarball('openwrt-luci')
-            self.run_install(shell, UPDATE='1')
+            self.run_install(shell, UPDATE='1', PWHASH='$6$salt$hash')
             self.assertEqual((self.M / 'openwrt-luci' / 'etc' / 'config' / 'network').read_text(), 'mine\n')
+
+    IMAGE = {'etc/passwd': 'root:x:0:0:root:/root:/bin/bash\nubuntu:x:1000:1000::/home/ubuntu:/bin/bash\n'
+                           'newsvc:x:120:120::/:/usr/sbin/nologin\n',
+             'etc/group': 'root:x:0:\nsudo:x:27:ubuntu\nubuntu:x:1000:\nnewsvc:x:120:\n',
+             'etc/shadow': 'root:*:19000:0:99999:7:::\nubuntu:$6$image$ubuntu:19000:0:99999:7:::\nnewsvc:!:19000::::::\n',
+             'etc/gshadow': 'root:*::\nsudo:*::ubuntu\nubuntu:!::\nnewsvc:!::\n',
+             'etc/.mu300-accounts-from-image': ''}
+    OLD = {'passwd': 'root:x:0:0:root:/root:/bin/bash\nubuntu:x:1000:1000::/home/ubuntu:/bin/bash\n'
+                     'kaan:x:1001:1001::/home/kaan:/bin/bash\n',
+           'group': 'root:x:0:\nsudo:x:27:ubuntu,kaan\nubuntu:x:1000:\nkaan:x:1001:\n',
+           'shadow': 'root:$6$old$root:19000:0:99999:7:::\nubuntu:$6$old$ubuntu:19000:0:99999:7:::\n'
+                     'kaan:$6$old$kaan:19000:0:99999:7:::\n',
+           'gshadow': 'root:*::\nsudo:*::ubuntu,kaan\nubuntu:!::\nkaan:!::\n'}
+
+    def old_ubuntu(self):
+        shutil.rmtree(self.M / 'ubuntu', ignore_errors=True)
+        etc = self.M / 'ubuntu' / 'etc'
+        etc.mkdir(parents=True)
+        for f, text in self.OLD.items():
+            (etc / f).write_text(text)
+        self.tarball('ubuntu', self.IMAGE)
+
+    def test_update_keeps_the_accounts(self):
+        # update (keep) without a new password: the accounts are the device's, as mu300-update carries them over -
+        # the old hashes, the users and group memberships added on the device; the image's new system user stays
+        for shell in self.each_shell():
+            self.old_ubuntu()
+            self.run_install(shell, OSES='ubuntu', BOOT_OS='ubuntu', UPDATE='1')
+            etc = self.M / 'ubuntu' / 'etc'
+            shadow = (etc / 'shadow').read_text()
+            for line in ('root:$6$old$root:', 'ubuntu:$6$old$ubuntu:', 'kaan:$6$old$kaan:', 'newsvc:!:'):
+                self.assertIn(line, shadow)
+            self.assertNotIn('$6$image$', shadow)
+            self.assertIn('kaan:x:1001:1001:', (etc / 'passwd').read_text())
+            self.assertIn('newsvc:x:120:', (etc / 'passwd').read_text())
+            self.assertIn('sudo:x:27:ubuntu,kaan\n', (etc / 'group').read_text())
+            self.assertIn('kaan:!::\n', (etc / 'gshadow').read_text())
+            self.assertFalse((etc / '.mu300-accounts-from-image').exists())
+
+    def test_update_with_a_new_password_keeps_the_other_accounts(self):
+        for shell in self.each_shell():
+            self.old_ubuntu()
+            self.run_install(shell, OSES='ubuntu', BOOT_OS='ubuntu', UPDATE='1', PWHASH='$6$new$hash')
+            shadow = (self.M / 'ubuntu' / 'etc' / 'shadow').read_text()
+            self.assertIn('ubuntu:$6$new$hash:', shadow)
+            self.assertIn('kaan:$6$old$kaan:', shadow)
+            self.assertFalse((self.M / 'ubuntu' / 'etc' / '.mu300-accounts-from-image').exists())
+
+    def test_fresh_install_takes_the_hash(self):
+        for shell in self.each_shell():
+            shutil.rmtree(self.M / 'ubuntu', ignore_errors=True)
+            self.tarball('ubuntu', self.IMAGE)
+            self.run_install(shell, OSES='ubuntu', BOOT_OS='ubuntu', UPDATE='0', PWHASH='$6$new$hash')
+            shadow = (self.M / 'ubuntu' / 'etc' / 'shadow').read_text()
+            self.assertIn('ubuntu:$6$new$hash:', shadow)
+            self.assertNotIn('kaan', shadow)
+
+    def test_never_a_default_or_empty_password(self):
+        # fail closed: without a new hash a system is installed only when its account keeps a real hash of its own;
+        # otherwise the old system stays as it was and the install stops (the boot image is never armed)
+        cases = (  # name, os, the old system's shadow (None: no old system / no shadow file), image shadow
+            ('fresh, no hash given', 'ubuntu', None, None),
+            ('old system without a shadow', 'ubuntu', '', None),
+            ('OpenWrt root with an empty password', 'openwrt', 'root::19000:0:99999:7:::\n', None),
+            ('locked account', 'ubuntu', 'root:*:1::\nubuntu:!:19000::::::\n', None),
+            ('no entry for the account', 'ubuntu', 'root:$6$a$b:1::\n', None),
+            ('the image default carried over', 'ubuntu', 'root:*:1::\nubuntu:$6$image$ubuntu:19000::::::\n', None))
+        for name, os_, old, _ in cases:
+            with self.subTest(name):
+                for shell in self.each_shell():
+                    shutil.rmtree(self.M / os_, ignore_errors=True)
+                    image = dict(self.IMAGE)
+                    if os_ == 'openwrt':
+                        image['etc/shadow'] = 'root::19000:0:99999:7:::\n'
+                    self.tarball(os_, image)
+                    if old is not None:
+                        (self.M / os_ / 'etc').mkdir(parents=True)
+                        (self.M / os_ / 'etc' / 'precious').write_text('old\n')
+                        if old:
+                            (self.M / os_ / 'etc' / 'shadow').write_text(old)
+                    r = self.run_install(shell, fails=True, OSES=os_, BOOT_OS=os_, UPDATE='1' if old is not None else '0')
+                    self.assertIn('would keep no password of its own', r.stdout)
+                    self.assertFalse((self.M / f'{os_}.new').exists())
+                    if old is not None:
+                        self.assertEqual((self.M / os_ / 'etc' / 'precious').read_text(), 'old\n')
+                    else:
+                        self.assertFalse((self.M / os_).exists())
+        # the same with a new hash: installed, the hash in place
+        for shell in self.each_shell():
+            shutil.rmtree(self.M / 'openwrt', ignore_errors=True)
+            self.tarball('openwrt', {'etc/shadow': 'root::19000:0:99999:7:::\n'})
+            self.run_install(shell, OSES='openwrt', BOOT_OS='openwrt', PWHASH='$6$new$hash')
+            self.assertIn('root:$6$new$hash:', (self.M / 'openwrt' / 'etc' / 'shadow').read_text())
+
+    def test_accounts_merge_is_mu300_updates(self):
+        # one merge, two copies: android-install.sh runs on Android and cannot source the system's mu300-update
+        upd = (TOP / 'rootfs/overlay/opt/mu300/bin/mu300-update').read_text()
+        fn = re.compile(r'^merge_accounts\(\) \{.*?^\}\n', re.S | re.M)
+        self.assertEqual(fn.search(self.install).group(0), fn.search(upd).group(0))
 
     def test_legacy_wipe_keeps_openwrt_luci(self):
         (self.M / 'lib' / 'systemd').mkdir(parents=True)

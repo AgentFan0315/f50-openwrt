@@ -71,6 +71,7 @@ if [ -d /in/android-subset ]; then
     mkdir -p $R/opt/mu300/android && cp -a /in/android-subset/. $R/opt/mu300/android/
     mv $R/opt/mu300/android/dev/__properties__ $R/opt/mu300/android/dev-properties && rmdir $R/opt/mu300/android/dev
 fi
+# cp -an FROM/. TO/ needs GNU cp (busybox cp -n skips an existing directory without looking into it); this runs in the build containers only
 [ -d /in/android-gpu-subset ] && cp -an /in/android-gpu-subset/. $R/opt/mu300/android/
 [ -e /in/cltest ] && { mkdir -p $R/opt/mu300/android/system/bin; install -m755 /in/cltest $R/opt/mu300/android/system/bin/cltest; }
 [ -e /in/logdw ] && install -m755 /in/logdw $R/opt/mu300/bin/logdw

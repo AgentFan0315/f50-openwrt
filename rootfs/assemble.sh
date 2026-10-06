@@ -51,6 +51,7 @@ if [ -d /android-subset ]; then mkdir -p $R/opt/mu300/android && cp -a /android-
 cp /logdw $R/opt/mu300/bin/logdw
 # tools/bt-init build (static arm64); Bluetooth also needs bt_configure_pskey.ini/bt_configure_rf.ini from Android /vendor/etc in /firmware
 # optional Mali GPU userspace (android-vendor/extract-gpu-subset.sh) and OpenCL test (tools/gpu)
+# cp -an FROM/. TO/ needs GNU cp (busybox cp -n skips an existing directory without looking into it); this runs in the build containers only
 if [ -d /android-gpu-subset ]; then cp -an /android-gpu-subset/. $R/opt/mu300/android/; fi
 if [ -e /cltest ]; then install -D -m755 /cltest $R/opt/mu300/android/system/bin/cltest; fi
 if [ -e /bt-init ]; then cp /bt-init $R/opt/mu300/bin/mu300-bt-init; fi
