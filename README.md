@@ -231,7 +231,7 @@ eamonxg. The app's own notes are in [`openwrt/luci-app-mu300/README.md`](openwrt
 | Check the mobile connection | `sudo mobile-data status` |
 | Set the APN | Ubuntu: `/etc/mu300/mobile-data.conf` (`MU300_APN`, `MU300_PDP_TYPE`). OpenWrt: LuCI → Network → Interfaces → wan, or `uci set network.wan.apn='…'; uci commit network; ifup wan`. Leave it empty to keep the context the SIM defines, which is what most carriers expect |
 | Change the Wi-Fi name or password | edit `/etc/mu300/hotspot.conf`, then `sudo systemctl restart mu300-hotspot` |
-| Connect the device to someone else's Wi-Fi | `sudo mu300-toolkit` → Network → Wi-Fi → "Join a network", or `sudo wifi-client scan` then `sudo wifi-client connect "NAME" "PASSWORD"` |
+| Connect the device to someone else's Wi-Fi | `sudo mu300-toolkit` → Network → Wi-Fi → "Join a network", or `sudo wifi-client scan` then `sudo wifi-client connect "NAME"` (it asks for the password); see [Wi-Fi client](#wi-fi-client) |
 | Update to the newest release | `sudo mu300-update check` then `sudo mu300-update apply`. The device looks for a new release at boot and every 6 hours and says so at login and in `mu300-toolkit`; it never installs one by itself |
 | Fixed TTL for mobile data (so the operator cannot tell hotspot traffic from the device's own) | `sudo mu300-ttl set 64` (`sudo mu300-ttl off` goes back to the default), or `mu300-toolkit` -> Network -> TTL |
 | Switch between OpenWrt and Ubuntu | `sudo mu300-os openwrt` / `sudo mu300-os ubuntu` (`openwrt-luci` for the one with the control panel) |
@@ -414,6 +414,60 @@ copy and an update or reinstall of a system keeps it; `mu300-update apply` bring
 `mu300-extra list` shows what there is, `mu300-extra status` what is installed, `sudo mu300-extra remove vpn` takes it
 off again (turn the VPN off first; it refuses while the VPN is on). A device that used the VPN before the engines became an extra keeps it working: the update installs the
 vpn extra by itself (or keeps the engines of the old system), and `mu300-vpn` fetches it when it finds none.
+
+### Wi-Fi client
+
+The radio can join another Wi-Fi network instead of being the hotspot (one or the other: the SC2355 does one at a
+time). The device then uses that network for itself and shares it with its USB clients, as it does mobile data.
+
+```sh
+sudo wifi-client scan                    # the networks in range: signal, security, name
+sudo wifi-client connect "NAME"          # asks for the password; nothing is shown as you type
+sudo wifi-client connect "NAME" --open   # an open network
+sudo wifi-client status
+sudo wifi-client disconnect              # the hotspot comes back, and stays after a reboot
+sudo wifi-client reconnect               # join the saved network again
+sudo wifi-client forget                  # delete the saved network
+```
+
+* **Give the password when asked, not on the command line.** `sudo` writes the whole command line to the system
+  journal, so `sudo wifi-client connect "NAME" "PASSWORD"` leaves the password there (it still works, with a
+  warning). From a script, pipe it in with `-`: `printf '%s\n' "$PW" | sudo wifi-client connect "NAME" -`, or keep it
+  in a file only root can read and use `--password-file FILE`. The joined network and its password are saved in
+  `/etc/mu300/wifi-client.conf` (root only) and joined again at every boot.
+* **`disconnect` lasts**: the next boot keeps the hotspot too. `sudo wifi-client disconnect --keep` leaves the
+  network joined at the next boot; `reconnect` turns it back on.
+* **Joining needs the radio as a client**, which is decided at boot: while it is the hotspot, `connect` saves the
+  network and asks for a reboot (or use `mu300-toolkit`, which offers a reboot with the hotspot off to scan).
+* **WPA2 and WPA2/WPA3 mixed networks work; WPA3-only ones do not.** The scan labels them `WPA3` (`WPA2/3` is mixed
+  mode, joined as WPA2), and `connect` refuses them as soon as it sees one: this Wi-Fi driver has no SAE. Set the
+  router to WPA2/WPA3 mixed mode to join it. (A driver that has SAE is used with it.)
+* **Sharing, and what it does not share**: USB clients reach the internet through the network, and only the
+  internet: its own devices and router (private, link-local, CGNAT, multicast and other special-purpose addresses,
+  and its subnet) are not reachable from the LAN, nor anything over IPv6, so a guest on the device's USB does not
+  end up on your home or hotel network (its router's public address is the internet's, though, and some routers
+  answer on it). From that network only ping, DHCP, IPv6 neighbour discovery and answers
+  come in: SSH and the device's other services are closed to it, as they are to the modem (use USB to reach the
+  device). The firewall is up, closed, before the radio joins; sharing starts only once DHCP has answered and the
+  address is checked (a network on the LAN's own subnet is refused). A lost link closes the sharing again and drops
+  the address (mobile data takes over); when the link comes back, DHCP is asked again and the new address checked
+  before anything is shared. The lease is renewed while joined, and a renewal
+  that brings another address goes through the same check. Leaving (`disconnect`, `forget`, a failed or interrupted join) removes everything in
+  one step, and only once the radio is off the network: a supplicant that will not stop keeps the firewall closed.
+  Forwarding is turned off again then unless mobile data is sharing. What counts is the table nft lists, never a
+  file: after every change the listing is compared rule for rule with what was asked, and a mismatch (or an nft that
+  cannot say) ends closed, or with the address and routes dropped; `wifi-client status` shows the state nft reports.
+  Stopping `mu300-wifi-client.service` takes the client down the same way, without touching the saved settings.
+  nftables tables `ip mu300_wifi_nat` (Ubuntu)
+  and `inet mu300_wifi_filter`; on OpenWrt `wlan0` also joins the `wan` firewall zone (fw4 does the NAT), with a
+  rule (`mu300-wifi-client-private`) for the private addresses. (A `LAN_CIDRS` entry in vpn.conf does not open the
+  other network to LAN clients either.) With the [VPN](#vpn) on, clients still go through the tunnel, and its kill
+  switch covers `wlan0` as it does the modem; these tables never let anything past it.
+* Names are shown as the network sends them when they are printable UTF-8; control characters, terminal escape
+  sequences, invisible and bidirectional characters, bytes that are not UTF-8 and a backslash itself are shown
+  as `\xNN`, and so are spaces at either end of a name. Such a network cannot be picked from the `mu300-toolkit`
+  list; join it with `sudo wifi-client connect` and its real name (a name with control characters cannot be joined).
+* The Wi-Fi route has metric 50 and mobile data 100, so with both the Wi-Fi is used and the SIM stays idle.
 
 ### Updating
 
