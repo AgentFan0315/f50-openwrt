@@ -13,7 +13,8 @@
 #   BOOT_OS            system started by the initramfs
 #   DEFAULT_LINUX=0|1  keep booting Linux (otherwise every Linux boot is one-shot and returns to Android)
 #   BOOT_ATTEMPTS=1-6  with DEFAULT_LINUX=1: failed boots in a row before Android (.mu300/boot-attempts)
-#   PWHASH             SHA-512 crypt hash for the "ubuntu" (Ubuntu) and "root" (OpenWrt) accounts
+#   PWHASH             SHA-512 crypt hash for the "ubuntu" (Ubuntu) and "root" (OpenWrt) accounts; empty with
+#                      UPDATE=1: the accounts and passwords of the previous installation stay as they are
 #   IMPORT_HOTSPOT=0|1 copy Android's hotspot SSID/passphrase into each system
 #   KERNEL=5.4|6.18|7.2  the kernel in the new boot image; mu300-update keeps installing that one (boot/kernel)
 # Extras pushed as $T/mu300-extra-<name>.tar.gz (the work directory, see below) go to extra/<name> on the Linux partition.
@@ -217,12 +218,59 @@ if [ "$IMPORT_HOTSPOT" = 1 ]; then
 fi
 
 # --- install-os begin
+# Accounts are settings too, and etc/shadow is not in keep: an update carries them over the way mu300-update does,
+# with its own function (copied here: this runs on Android and cannot source the new system's mu300-update; tests
+# keep the two the same). The old entry of every account both systems have (hashes, group memberships merged), and
+# the users and groups the old system added (ids 1000-59999). A new password (PWHASH) is put in afterwards.
+ACCOUNTS_MARK=/etc/.mu300-accounts-from-image
+merge_accounts() {  # merge_accounts OLD_ROOT NEW_ROOT   ("" is the running system)
+    o=$1 n=$2
+    [ -f "$o/etc/shadow" ] && [ -f "$n/etc/shadow" ] || return 0
+    for f in passwd group shadow gshadow; do
+        [ -f "$o/etc/$f" ] && [ -f "$n/etc/$f" ] || continue
+        awk -F: -v OFS=: -v f="$f" -v op="$o/etc/passwd" -v og="$o/etc/group" '
+            BEGIN {
+                while ((getline l < op) > 0) { split(l, a, ":"); if (a[3] >= 1000 && a[3] < 60000) lu[a[1]] = 1 }
+                while ((getline l < og) > 0) { split(l, a, ":"); if (a[3] >= 1000 && a[3] < 60000) lg[a[1]] = 1 }
+            }
+            NR == FNR { old[$1] = $0; next }
+            {
+                seen[$1] = 1
+                if ((f == "shadow" || f == "gshadow") && ($1 in old)) { print old[$1]; next }
+                if (f == "group" && ($1 in old)) {
+                    split(old[$1], og4, ":"); m = $4; k = split(og4[4], om, ",")
+                    for (i = 1; i <= k; i++)
+                        if (om[i] != "" && index("," m ",", "," om[i] ",") == 0) m = (m == "" ? om[i] : m "," om[i])
+                    $4 = m
+                }
+                print
+            }
+            END {
+                for (x in old) if (!(x in seen)) {
+                    if ((f == "passwd" || f == "shadow") && (x in lu)) print old[x]
+                    if ((f == "group" || f == "gshadow") && (x in lg)) print old[x]
+                }
+            }' "$o/etc/$f" "$n/etc/$f" > "$n/etc/$f.mu300" || { rm -f "$n/etc/$f.mu300"; return 1; }
+        # renamed into place, never rewritten: a crash (or a reader at boot) never sees a half-written passwd.
+        # The copy made with cp -p keeps the file's owner and mode (shadow is root:shadow 0640; no stat on OpenWrt).
+        if [ -s "$n/etc/$f.mu300" ]; then
+            cp -p "$n/etc/$f" "$n/etc/$f.mu300-new" && cat "$n/etc/$f.mu300" > "$n/etc/$f.mu300-new" && sync &&
+                mv -f "$n/etc/$f.mu300-new" "$n/etc/$f" || { rm -f "$n/etc/$f.mu300" "$n/etc/$f.mu300-new"; return 1; }
+        fi
+        rm -f "$n/etc/$f.mu300"
+    done
+    rm -f "$n$ACCOUNTS_MARK"
+}
 for os in $OSES; do
     tarball=$T/mu300-$os.tar.gz
     [ -f $tarball ] || { say "missing $tarball"; exit 1; }
     say "installing $os"
     rm -rf $M/$os.new && mkdir $M/$os.new
     tar -xzpf $tarball -C $M/$os.new
+    # the account the installer gives a password (ubuntu, OpenWrt's root) and its hash in the image
+    case $os in ubuntu) pwu=ubuntu ;; *) pwu=root ;; esac
+    carried=0
+    imghash=$(sed -n "s/^$pwu:\([^:]*\):.*/\1/p" $M/$os.new/etc/shadow 2>/dev/null | head -n1) || imghash=
     # prebuilt images: firmware and Android userspace pulled from this device by install.sh (tools/vendor-overlay.py)
     if [ -f $T/mu300-vendor-$os.tar.gz ]; then
         tar -xzpf $T/mu300-vendor-$os.tar.gz -C $M/$os.new
@@ -270,8 +318,28 @@ for os in $OSES; do
                 done ;;
         esac
         say "kept from the previous $os:$kept"
+        if [ -f "$M/$os/etc/shadow" ]; then
+            merge_accounts "$M/$os" "$M/$os.new" || { say "could not carry the accounts of $os over; nothing was replaced"; exit 1; }
+            carried=1
+            say "kept the accounts and passwords of the previous $os"
+        fi
         extra_keep_vpn $M $M/$os
         [ -n "$extra" ] && say "kept enabled services:$extra"
+    fi
+    # The password, before the new system replaces the old one: the hash just chosen, or (an update without one) the
+    # one carried over. Fail closed: a system whose account would be left with no hash, an empty one, the image's
+    # default or the image's accounts is not installed, and the old one stays.
+    if [ -n "$PWHASH" ]; then
+        rm -f $M/$os.new$ACCOUNTS_MARK   # the password is the one just chosen, not one to carry over
+        sed -i "s|^$pwu:[^:]*:|$pwu:$PWHASH:|" $M/$os.new/etc/shadow
+    fi
+    h=$(sed -n "s/^$pwu:\([^:]*\):.*/\1/p" $M/$os.new/etc/shadow 2>/dev/null | head -n1) || h=
+    case $h in '$'?*) ;; *) h= ;; esac
+    if [ -z "$h" ] || [ -e $M/$os.new$ACCOUNTS_MARK ] ||
+        { [ -z "$PWHASH" ] && { [ "$carried" != 1 ] || [ "$h" = "$imghash" ]; }; }; then
+        rm -rf $M/$os.new
+        say "$os: $pwu would keep no password of its own (empty, the image's default, or none to carry over); $os was not replaced. Install again with MU300_PASSWORD_RESET=yes in /data/adb/mu300-install.conf (or choose a password in install.sh)"
+        exit 1
     fi
     rm -rf $M/$os && mv $M/$os.new $M/$os
     R=$M/$os
@@ -284,13 +352,6 @@ for os in $OSES; do
         umask 022
     fi
     if [ "$DEFAULT_LINUX" = 1 ]; then echo linux > $R/etc/mu300/default-boot; else rm -f $R/etc/mu300/default-boot; fi
-    if [ -n "$PWHASH" ]; then
-        rm -f $R/etc/.mu300-accounts-from-image   # the password is the one just chosen, not one to carry over
-        case $os in
-            ubuntu) sed -i "s|^ubuntu:[^:]*:|ubuntu:$PWHASH:|" $R/etc/shadow ;;
-            openwrt|openwrt-*) sed -i "s|^root:[^:]*:|root:$PWHASH:|" $R/etc/shadow ;;
-        esac
-    fi
     rm -f $tarball
 done
 mkdir -p $M/.mu300
