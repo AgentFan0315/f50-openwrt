@@ -43,12 +43,13 @@
 1. 准备一台 Linux 环境(WSL2 Ubuntu 即可),需要 root、qemu-user-static、squashfs-tools
 2. **构建输入**(详见脚本头部注释):
    - `VANILLA_SRC` — 上游 v2026.10.11 release 的 `mu300-openwrt-luci-rootfs.tar.gz`
-   - `VENDOR_TAR` — 厂商 android/firmware 打包(从上游 release 按上游 docs/BUILD.md 提取)
+   - `VENDOR_TAR` — 厂商 android/firmware 打包。**它不在任何 release 里**(专有文件,只能来自你自己的设备):在跑着任一 mu300 Linux 系统的设备上,一条命令生成——`bash custom/make-vendor-tar.sh ssh root@192.168.0.1`
    - `KERNEL_OUT` — 可选,自编译降噪内核输出(`kernel/build-all.sh` 的产物);不设则使用基线模块
    - `MAINTAINER_KEY` — 可选,你的 SSH 公钥路径,构建进镜像用于密钥登录
 3. 构建 rootfs:`bash custom/build-clean.sh`(约 1 分钟,80+ 项自检)
 4. 构建 boot 镜像与内核:见上游 `docs/BUILD.md`,本仓库对其的改动只有交叉编译支持与降噪补丁(`kernel/patches/logspam-quiet.patch`、`wlan_combo-logspam-quiet.patch`)
 5. 部署到设备:见 [docs/DEPLOY-f50clean.md](docs/DEPLOY-f50clean.md)
+6. **跟随上游主线**(新 release 怎么跟、内核补丁怎么 rebase、设备怎么升级):[docs/TRACKING-UPSTREAM.md](docs/TRACKING-UPSTREAM.md)
 
 ### 红线(沿自上游,违反可能变砖或断电)
 
@@ -88,12 +89,13 @@ The full bilingual change list is in [CHANGELOG.md](CHANGELOG.md).
 1. A Linux environment (WSL2 Ubuntu works) with root, qemu-user-static and squashfs-tools
 2. **Build inputs** (see the header of `custom/build-clean.sh`):
    - `VANILLA_SRC` — `mu300-openwrt-luci-rootfs.tar.gz` from upstream release v2026.10.11
-   - `VENDOR_TAR` — the vendor android/firmware tarball (extracted from the upstream release per upstream `docs/BUILD.md`)
+   - `VENDOR_TAR` — the vendor android/firmware tarball. **It is in no release** (proprietary files that can only come from your own device): generate it with one command from a device running any mu300 Linux system — `bash custom/make-vendor-tar.sh ssh root@192.168.0.1`
    - `KERNEL_OUT` — optional, output of a self-built quiet kernel (`kernel/build-all.sh`); falls back to baseline modules when unset
    - `MAINTAINER_KEY` — optional SSH public key baked into the image for key login
 3. Build the rootfs: `bash custom/build-clean.sh` (~1 minute, 80+ self-checks)
 4. Boot image & kernel: see upstream `docs/BUILD.md`; our only changes there are x86 cross-compile support and the log-spam patches
 5. Deploy: [docs/DEPLOY-f50clean.md](docs/DEPLOY-f50clean.md)
+6. **Tracking upstream** (new releases, kernel patch rebases, device upgrades): [docs/TRACKING-UPSTREAM.md](docs/TRACKING-UPSTREAM.md)
 
 ### Red lines (inherited from upstream — breaking them can brick or power off the device)
 
