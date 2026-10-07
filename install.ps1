@@ -548,6 +548,10 @@ if ($SD_MODE -eq 0 -and $SIZE -lt 700MB) {
 
 $existing = 'no'
 foreach ($cand in @($OFF, 27762098176)) {
+    # a probe past the end of the eMMC cannot find a filesystem, and Android's toybox dd answers the
+    # failing lseek there with a byte-at-a-time skip that never finishes (32 GB variants: $OFF lands
+    # exactly on the disk end, so $cand + 1080 is out of range and the probe hangs forever)
+    if ($cand + 2048 -gt $disk * 512) { continue }
     $m = (SuDo "dd if=/dev/block/mmcblk0 bs=1 skip=$($cand + 1080) count=2 2>/dev/null | od -An -tx1") -replace '\s', ''
     $l = (SuDo "dd if=/dev/block/mmcblk0 bs=1 skip=$($cand + 1144) count=16 2>/dev/null") -replace '\0', ''
     if ($m -eq '53ef' -and $l.Trim() -eq 'mu300root') {
@@ -792,9 +796,15 @@ foreach ($f in $files) {
         Move-Item -Force "$REL\$f.part" "$REL\$f"
     }
 }
-Remove-Item -Recurse -Force "$REL\kernel" -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path "$REL\kernel" | Out-Null
-& tar -xzf "$REL\mu300-kernel.tar.gz" -C "$REL\kernel"
+# skip the unpack when a good one is already in place: tar spawned from this installer has been seen
+# to produce an empty kernel\ directory without any error on some machines, which only surfaced later
+# as a missing kernel\busybox inside build-boot-image.py
+if (-not (Test-Path "$REL\kernel\busybox")) {
+    Remove-Item -Recurse -Force "$REL\kernel" -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path "$REL\kernel" | Out-Null
+    & tar -xzf "$REL\mu300-kernel.tar.gz" -C "$REL\kernel"
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$REL\kernel\busybox")) { Die (T '{1} failed' 'tar -xzf mu300-kernel.tar.gz') }
+}
 if ($DEVICE -ne 'f50' -and -not (Test-Path "$REL\kernel\modules-$DEVICE")) { Die (T 'release {1} does not support this device yet; use a newer one' $Release) }
 # a mainline kernel (6.18, 7.2): its bundle, unpacked
 $KMAIN = $null
