@@ -6,6 +6,9 @@
 #   realme C51/C53 AndroidT kernel_modules: wlan_combo (Wi-Fi), bluetooth tty-pcie, Mali kbase (sparse checkout)
 # Needs docker (arm64 host or emulation). Rebuilds incrementally when run again.
 set -eu
+# x86 host cross-compile: clang's --target comes from CROSS_COMPILE in this 5.4 Makefile;
+# empty CROSS_COMPILE (fine on the arm64 hosts upstream uses) makes clang target the host here.
+export CROSS_COMPILE=aarch64-linux-gnu-
 TOP=$(cd "$(dirname "$0")/.." && pwd)
 VOL=${MU300_KBUILD_VOLUME:-mu300-kernel}
 OUT=${MU300_KERNEL_OUT:-$TOP/out}
@@ -24,6 +27,7 @@ cp "$TOP/kernel/f50-stock-B09.config" "$W/device.config"
 
 docker run --rm -v "$VOL":/src -v "$W":/work \
   -e KERNEL_REPO=$KERNEL_REPO -e KERNEL_REV=$KERNEL_REV -e MODULES_REPO=$MODULES_REPO -e MODULES_REV=$MODULES_REV \
+  -e CROSS_COMPILE=aarch64-linux-gnu- \
   mu300-kbuild bash -euc '
 fetch() {  # fetch DIR REPO REV [sparse paths...]: shallow checkout of one commit
     d=$1 repo=$2 rev=$3; shift 3
@@ -45,7 +49,7 @@ echo "==> sources"
 fetch /src/zte-u30air "$KERNEL_REPO" "$KERNEL_REV"
 cd /src/zte-u30air
 # the tree is the pinned commit plus exactly these patches: reapply from a clean checkout whenever they change
-KPATCHES="bluetooth-marlin3-link-policy of-reserved-mem-skip of-reserved-mem-add regdb-wens-certificate sipa-delegate-einprogress wcn-pcie-scan-timeout sipc-base-addr-attr sipa-delegate-pm-runtime sipc-debug-once sprdwcn-mbuf-pool-deinit-null"
+KPATCHES="bluetooth-marlin3-link-policy of-reserved-mem-skip of-reserved-mem-add regdb-wens-certificate sipa-delegate-einprogress wcn-pcie-scan-timeout sipc-base-addr-attr sipa-delegate-pm-runtime sipc-debug-once sprdwcn-mbuf-pool-deinit-null logspam-quiet"
 sum=$(cd /work/patches && cat $(for p in $KPATCHES; do echo $p.patch; done) | sha256sum | cut -d" " -f1)
 if [ "$(cat .mu300-patches 2>/dev/null)" != "$sum" ]; then
     git checkout -q -f "$KERNEL_REV" && git clean -q -fdx -e .mu300-patches
@@ -55,7 +59,10 @@ fi
 echo -gb50db5b6224c > .scmversion
 M=kernel_modules/kernel5.4
 fetch /src/realme "$MODULES_REPO" "$MODULES_REV" $M/wcn/wlan/wlan_combo $M/wcn/bluetooth/driver $M/gpu/natt/mali
-[ -d /src/ext-wlan_combo ] || cp -r /src/realme/$M/wcn/wlan/wlan_combo /src/ext-wlan_combo
+# rebuild from a pristine tree every time: the patch stack has overlapping context
+# (power-serialise rewrites context lines of post-init-retry), and a stale tree breaks
+# build-wlan.sh's "already applied" detection (fresh apply verified: all 10 patches chain)
+rm -rf /src/ext-wlan_combo && cp -r /src/realme/$M/wcn/wlan/wlan_combo /src/ext-wlan_combo
 [ -d /src/ext-sprdbt ] || cp -r /src/realme/$M/wcn/bluetooth/driver /src/ext-sprdbt
 # like build-wlan.sh does for Wi-Fi: the MU300 fixes of the Bluetooth driver, skipped when already applied
 (cd /src/ext-sprdbt && for p in /work/patches/sprdbt-*.patch; do patch -p1 --forward -s < "$p" || true; done)
