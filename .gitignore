@@ -45,3 +45,25 @@ upstream/out-*/
 .mu300-keep
 # a test run with TMPDIR inside the tree
 tests/mu300-test-*/
+
+# f50clean fork: local build inputs/outputs, secrets and Windows-side tooling — never commit
+/dist/
+/vendor/
+/f50control/
+/*.cmd
+/*.bat
+/custom/id_mu300
+/custom/id_mu300.pub
+/custom/files/
+/custom/DEPLOY.md
+/custom/build-final.sh
+/custom/build-final2.sh
+/custom/fix-*.py
+/custom/logspam-*.py
+/custom/apply-logspam.sh
+/custom/gpt-list.py
+/custom/*.ps1
+/custom/10-mu300-usb.fixed
+/custom/f50-hotspot.xml
+/custom/install-f50-device.sh
+/custom/install-f50clean-device.sh
