@@ -525,12 +525,15 @@ apply_usb_net() {  # apply_usb_net ROOTDIR: rebind once if ROOTDIR asks for othe
 # The ext4 area holds one or more systems: /ubuntu, /openwrt, /openwrt-luci (selected by /.mu300/boot-os), or a
 # single Ubuntu directly in its root (first installs). Explicit names only: a kept copy (openwrt.old, ubuntu.broken)
 # must never be what boots, so a boot-os with a dot in it is ignored.
+# A system can also be an image system: the directory then holds system.squashfs (the read-only base) and data/
+# (the overlay's upper/work) instead of a live tree - the router layout, where a factory reset is an empty data/.
 has_init() { [ -x "$1/lib/systemd/systemd" ] || [ -x "$1/sbin/init" ]; }
+is_image_system() { [ -f "$1/system.squashfs" ]; }
 pick_root() {
     want=$(cat /disk/.mu300/boot-os 2>/dev/null)
     case $want in *.*|*/*) want= ;; esac
     for os in $want ubuntu openwrt openwrt-luci; do
-        [ -d "/disk/$os" ] && has_init "/disk/$os" && { echo "/disk/$os"; return; }
+        [ -d "/disk/$os" ] && { is_image_system "/disk/$os" || has_init "/disk/$os"; } && { echo "/disk/$os"; return; }
         # legacy layout: Ubuntu in the filesystem root
         [ "$os" = ubuntu ] && [ -x /disk/lib/systemd/systemd ] && { echo /disk; return; }
     done
@@ -628,7 +631,33 @@ boot_tries_exceeded() {
 }
 # --- boot-tries end
 if [ "$root_mounted" = 1 ] && rootdir=$(pick_root) && [ -n "$rootdir" ]; then
-    if boot_tries_exceeded "$rootdir" /disk; then
+    diskat=/disk   # where the disk is reachable in this namespace (an image boot moves it into /newroot early)
+    img_boot=
+    # image system: mount the read-only squashfs base and overlay the data dir on it (the router layout:
+    # /rom is the base, /overlay the upper, so fstools' factoryreset = emptying the data dir). No fallback
+    # to another system on a mount failure: a corrupt image is reported, not silently routed around.
+    if is_image_system "$rootdir"; then
+        osname=${rootdir#/disk/}
+        mkdir -p /sq "$rootdir/data/upper" "$rootdir/data/work"
+        if mount -t squashfs -o ro,loop "$rootdir/system.squashfs" /sq 2>>/run/rootmount.err &&
+           mount -t overlay overlay -o "lowerdir=/sq,upperdir=$rootdir/data/upper,workdir=$rootdir/data/work" /newroot 2>>/run/rootmount.err; then
+            log "stage=root-image os=$osname"
+            mkdir -p /newroot/mnt/mu300-disk
+            mount --move /disk /newroot/mnt/mu300-disk
+            mount --move /sq /newroot/rom
+            mount --bind "/newroot/mnt/mu300-disk/$osname/data/upper" /newroot/overlay
+            rootdir=/newroot
+            diskat=/newroot/mnt/mu300-disk
+            img_boot=1
+        else
+            log "stage=root-image-FAILED os=$osname $(cat /run/rootmount.err 2>/dev/null)"
+            umount /sq 2>/dev/null
+            rootdir=
+        fi
+    fi
+fi
+if [ "$root_mounted" = 1 ] && [ -n "$rootdir" ]; then
+    if boot_tries_exceeded "$rootdir" "$diskat"; then
         restore_android
         persist
         sync
@@ -638,12 +667,14 @@ if [ "$root_mounted" = 1 ] && rootdir=$(pick_root) && [ -n "$rootdir" ]; then
 
     # the USB mode this system's panel chose (D12): one rebind before switch_root when it differs
     apply_usb_net "$rootdir"
-    if [ "$rootdir" = /disk ]; then
-        mount --move /disk /newroot
-    else
-        mount --bind "$rootdir" /newroot
-        # keep the whole disk reachable from inside (switching systems, editing the other one)
-        mkdir -p /newroot/mnt/mu300-disk && mount --move /disk /newroot/mnt/mu300-disk
+    if [ -z "$img_boot" ]; then
+        if [ "$rootdir" = /disk ]; then
+            mount --move /disk /newroot
+        else
+            mount --bind "$rootdir" /newroot
+            # keep the whole disk reachable from inside (switching systems, editing the other one)
+            mkdir -p /newroot/mnt/mu300-disk && mount --move /disk /newroot/mnt/mu300-disk
+        fi
     fi
     # Default-Linux mode: leave LK's decremented tries (Linux's slot: not successful). Userspace re-arms the Linux
     # slot (tries N+1) once the system is up; N boots in a row that never get there and LK falls back to Android on
